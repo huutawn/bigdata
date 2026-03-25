@@ -1,0 +1,3 @@
+{"timestamp":"2026-03-24T10:00:00Z","ip":"192.168.1.10","endpoint":"/api/v1/login","status":200,"request_time_ms":120,"user_agent":"Mozilla/5.0"}
+{"timestamp":"2026-03-24T10:00:01Z","ip":"1.2.3.4","endpoint":"/api/v1/products","status":200,"request_time_ms":50,"user_agent":"Googlebot/2.1"}
+{"timestamp":"2026-03-24T10:00:02Z","ip":"192.168.1.5","endpoint":"/api/v1/cart","status":504,"request_time_ms":4500,"user_agent":"Mozilla/5.0"}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalyzeResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "is_bot",
+    "predicted_load",
+    "is_anomaly"
+  ],
+  "properties": {
+    "is_bot": {
+      "type": "boolean"
+    },
+    "predicted_load": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "is_anomaly": {
+      "type": "boolean"
+    }
+  }
+}

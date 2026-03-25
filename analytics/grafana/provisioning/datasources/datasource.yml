@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: clickhouse-aiops
+    uid: clickhouse-aiops
+    type: grafana-clickhouse-datasource
+    access: proxy
+    jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
+      defaultDatabase: default
+      username: default
+      queryTimeout: 60
+      dialTimeout: 10
+    editable: true

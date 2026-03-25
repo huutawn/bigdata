@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalyzeRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ip",
+    "latency_ms",
+    "current_rps"
+  ],
+  "properties": {
+    "ip": {
+      "type": "string",
+      "minLength": 7
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "current_rps": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

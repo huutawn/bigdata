@@ -1,0 +1,142 @@
+services:
+  nats:
+    image: nats:2.10.22-alpine
+    command:
+      - "-js"
+      - "-m"
+      - "8222"
+    ports:
+      - "${NATS_CLIENT_PORT:-4222}:4222"
+      - "${NATS_HTTP_PORT:-8222}:8222"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://localhost:8222/healthz > /dev/null || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: "${NATS_MEMORY_LIMIT:-128m}"
+    networks:
+      - aiops
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+    volumes:
+      - ../analytics/sql/create_processed_logs.sql:/docker-entrypoint-initdb.d/001-create_processed_logs.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://localhost:8123/ping | grep -q Ok. || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: "${CLICKHOUSE_MEMORY_LIMIT:-768m}"
+    networks:
+      - aiops
+
+  grafana:
+    image: grafana/grafana-oss:11.5.2
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    volumes:
+      - ../analytics/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../analytics/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    mem_limit: "${GRAFANA_MEMORY_LIMIT:-384m}"
+    networks:
+      - aiops
+
+  ml-api:
+    build:
+      context: ../ml-api
+      dockerfile: Dockerfile
+    profiles:
+      - app
+    environment:
+      ML_API_PORT: "${ML_API_PORT:-8000}"
+      ML_MODELS_DIR: /app/models
+    ports:
+      - "${ML_API_PORT:-8000}:8000"
+    volumes:
+      - ../ml-api/models:/app/models
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: "${ML_API_MEMORY_LIMIT:-256m}"
+    networks:
+      - aiops
+
+  generator:
+    build:
+      context: ../generator
+      dockerfile: Dockerfile
+    profiles:
+      - app
+    environment:
+      NATS_URL: "${NATS_URL:-nats://nats:4222}"
+      NATS_SUBJECT: "${NATS_SUBJECT:-logs.raw}"
+      GENERATOR_BATCH_SIZE: "${GENERATOR_BATCH_SIZE:-5}"
+      GENERATOR_PUBLISH_INTERVAL_SECONDS: "${GENERATOR_PUBLISH_INTERVAL_SECONDS:-3}"
+      GENERATOR_SEED: "${GENERATOR_SEED:-7}"
+    depends_on:
+      nats:
+        condition: service_healthy
+    mem_limit: "${GENERATOR_MEMORY_LIMIT:-256m}"
+    networks:
+      - aiops
+
+  stream-processor:
+    build:
+      context: ../stream-processor
+      dockerfile: Dockerfile
+    profiles:
+      - app
+    environment:
+      NATS_URL: "${NATS_URL:-nats://nats:4222}"
+      NATS_SUBJECT: "${NATS_SUBJECT:-logs.raw}"
+      STREAM_BATCH_SIZE: "${STREAM_BATCH_SIZE:-5}"
+      STREAM_POLL_TIMEOUT_SECONDS: "${STREAM_POLL_TIMEOUT_SECONDS:-3}"
+      STREAM_POLL_INTERVAL_SECONDS: "${STREAM_POLL_INTERVAL_SECONDS:-10}"
+      ML_API_URL: "${ML_API_URL:-http://ml-api:8000}"
+      CLICKHOUSE_URL: "${CLICKHOUSE_URL:-http://clickhouse:8123}"
+      CLICKHOUSE_TABLE: "${CLICKHOUSE_TABLE:-processed_logs}"
+      RAW_LOG_SAMPLE_PATH: /app/contracts/examples/raw-logs.sample.jsonl
+      STREAM_FALLBACK_OUTPUT_PATH: "${STREAM_FALLBACK_OUTPUT_PATH:-/app/output/processed_logs.mock.jsonl}"
+    volumes:
+      - ../contracts:/app/contracts:ro
+      - ../stream-processor/output:/app/output
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      ml-api:
+        condition: service_healthy
+    mem_limit: "${STREAM_MEMORY_LIMIT:-768m}"
+    networks:
+      - aiops
+
+volumes:
+  grafana-data:
+
+networks:
+  aiops:
+    driver: bridge

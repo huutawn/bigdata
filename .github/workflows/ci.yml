@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ml-api/requirements.txt
+
+      - name: Validate contracts
+        run: python scripts/validate_contracts.py
+
+      - name: Run bootstrap unit tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Validate docker compose
+        run: docker compose -f infra/docker-compose.yml --env-file .env.example config
+
+      - name: Start ClickHouse smoke dependency
+        run: docker compose -f infra/docker-compose.yml --env-file .env.example up -d clickhouse
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8123/ping > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ClickHouse did not become ready in time"
+          exit 1
+
+      - name: Seed analytics data
+        run: python analytics/scripts/ensure_seed.py
+
+      - name: Run analytics query smoke test
+        run: python analytics/scripts/query_smoke.py
+
+      - name: Stop ClickHouse
+        if: always()
+        run: docker compose -f infra/docker-compose.yml --env-file .env.example down -v

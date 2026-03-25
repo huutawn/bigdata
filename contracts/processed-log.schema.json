@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProcessedLog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp",
+    "ip",
+    "endpoint",
+    "latency_ms",
+    "is_bot",
+    "predicted_load",
+    "is_anomaly"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 7
+    },
+    "endpoint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "is_bot": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "predicted_load": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "is_anomaly": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ]
+    }
+  }
+}

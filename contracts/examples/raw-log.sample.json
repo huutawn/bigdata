@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-03-24T10:00:00Z",
+  "ip": "1.2.3.4",
+  "endpoint": "/api/v1/products",
+  "status": 200,
+  "request_time_ms": 150,
+  "user_agent": "Mozilla/5.0"
+}
