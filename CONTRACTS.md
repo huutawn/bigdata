@@ -1,6 +1,6 @@
 # Contracts
 
-`CONTRACTS.md` la nguon chan ly cho interface giua 4 module. Moi thay doi schema phai duoc Tech Lead review.
+`CONTRACTS.md` là nguồn chân lý cho interface giữa 4 module. Mọi thay đổi schema phải được Tech Lead review.
 
 ## 1. Raw Log Contract
 
@@ -80,19 +80,19 @@ ORDER BY timestamp;
 
 ## 4. Deterministic Mock Rules
 
-Mock rule phai giong nhau giua `ml-api` va local fallback cua `stream-processor`.
+Mock rule phải giống nhau giữa `ml-api` và local fallback của `stream-processor`.
 
-- `is_bot = true` neu `ip` nam trong `{"1.1.1.1", "1.2.3.4"}`.
-- `is_anomaly = true` neu `latency_ms >= 3000`.
-- `predicted_load = current_rps + 20`, cong them `30` neu `is_anomaly = true`.
+- `is_bot = true` nếu `ip` nằm trong `{"1.1.1.1", "1.2.3.4"}`.
+- `is_anomaly = true` nếu `latency_ms >= 3000`.
+- `predicted_load = current_rps + 20`, cộng thêm `30` nếu `is_anomaly = true`.
 
 ## 5. Readiness and Fallback
 
-- `generator`: startup fail som neu khong ket noi duoc NATS.
+- `generator`: startup fail sớm nếu không kết nối được NATS.
 - `stream-processor`:
-  - neu NATS khong tra message trong timeout, doc sample JSONL.
-  - neu `ml-api` timeout hoac `/healthz` khong healthy, dung local mock analyzer.
-  - neu ClickHouse ghi that bai, dump batch vao file fallback.
+  - nếu NATS không trả message trong timeout, đọc sample JSONL.
+  - nếu `ml-api` timeout hoặc `/healthz` không healthy, dùng local mock analyzer.
+  - nếu ClickHouse ghi thất bại, dump batch vào file fallback.
 - `analytics`:
-  - luon `CREATE TABLE IF NOT EXISTS`.
-  - neu `processed_logs` bang rong, auto seed tu `analytics/sql/seed_processed_logs.sql`.
+  - luôn `CREATE TABLE IF NOT EXISTS`.
+  - nếu `processed_logs` bảng rỗng, auto seed từ `analytics/sql/seed_processed_logs.sql`.

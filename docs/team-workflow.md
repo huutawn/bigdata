@@ -18,24 +18,24 @@
 
 ## Change Boundaries
 
-- Khong sua module cua nguoi khac neu khong can thiet.
-- Schema change phai sua dong thoi `CONTRACTS.md`, schema JSON va examples.
-- Infrastructure change phai duoc test lai bang `docker compose -f infra/docker-compose.yml config`.
+- Không sửa module của người khác nếu không cần thiết.
+- Schema change phải sửa đồng thời `CONTRACTS.md`, schema JSON và examples.
+- Infrastructure change phải được test lại bằng `docker compose -f infra/docker-compose.yml config`.
 
 ## Dependency Matrix
 
-| Team | Input dependency | Cach mo khoa khi dependency chua san sang |
+| Team | Input dependency | Cách mở khoá khi dependency chưa sẵn sàng |
 | --- | --- | --- |
-| Generator | NATS | Fail som neu NATS down, khong block team khac |
-| Stream | NATS raw logs | Doc `contracts/examples/raw-logs.sample.jsonl` |
-| Stream | ML API | Dung local mock analyzer |
+| Generator | NATS | Fail sớm nếu NATS down, không block team khác |
+| Stream | NATS raw logs | Đọc `contracts/examples/raw-logs.sample.jsonl` |
+| Stream | ML API | Dùng local mock analyzer |
 | Stream | ClickHouse | Dump sang `stream-processor/output/processed_logs.mock.jsonl` |
-| Analytics | ClickHouse rows | `ensure_seed.py` tao bang va seed du lieu mau |
-| ML | Model artifact | Chay mock mode cho toi khi co file trong `ml-api/models/` |
+| Analytics | ClickHouse rows | `ensure_seed.py` tạo bảng và seed dữ liệu mẫu |
+| ML | Model artifact | Chạy mock mode cho tới khi có file trong `ml-api/models/` |
 
 ## PR Checklist
 
-- Interface van dung voi contracts hien tai.
-- Co fallback/mock neu code cua ban phu thuoc module khac.
-- Co test cho logic moi hoac update bootstrap tests.
-- Khong sua file ngoai ownership neu chang chang buoc.
+- Interface vẫn đúng với contracts hiện tại.
+- Có fallback/mock nếu code của bạn phụ thuộc module khác.
+- Có test cho logic mới hoặc update bootstrap tests.
+- Không sửa file ngoài ownership nếu chẳng đặng đừng.
