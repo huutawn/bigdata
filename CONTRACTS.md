@@ -1,9 +1,13 @@
 # Contracts
 
-`CONTRACTS.md` là nguồn chân lý cho interface giữa 4 module. Mọi thay đổi schema phải được Tech Lead review.
+`CONTRACTS.md` là nguồn chân lý cho interface giữa 4 module. Mọi thay đổi schema phải được Tân review.
 
 ## 1. Raw Log Contract
 
+- **Mục đích**: Quy định cấu trúc log thô được gửi từ API Gateway.
+- **Thành viên sử dụng**: 
+  - **Trâm (Generator)**: Người tạo và gửi dữ liệu.
+  - **Lên (Stream)**: Người nhận và bắt đầu xử lý.
 - Subject: `logs.raw`
 - Producer: `generator`
 - Consumer: `stream-processor`
@@ -27,6 +31,10 @@
 
 ## 2. Analyze API Contract
 
+- **Mục đích**: Giao thức gọi mô hình AI để phân tích Bot, Dự báo tải và Bất thường.
+- **Thành viên sử dụng**:
+  - **Lên (Stream)**: Người gọi API để lấy kết quả phân tích.
+  - **Luân (ML AI)**: Người cung cấp dịch vụ và xử lý yêu cầu.
 - Provider: `ml-api`
 - Caller: `stream-processor`
 - Endpoint: `POST /analyze`
@@ -57,6 +65,10 @@
 
 ## 3. Processed Log Contract
 
+- **Mục đích**: Định dạng dữ liệu cuối cùng sau khi đã được phân tích bởi AI để lưu trữ và trực quan hóa.
+- **Thành viên sử dụng**:
+  - **Lên (Stream)**: Người ghi dữ liệu vào kho ClickHouse.
+  - **Hòa (Analytics)**: Người đọc dữ liệu để vẽ Dashboard Grafana.
 - Storage: ClickHouse
 - Table: `processed_logs`
 - Writer: `stream-processor`
@@ -88,11 +100,11 @@ Mock rule phải giống nhau giữa `ml-api` và local fallback của `stream-p
 
 ## 5. Readiness and Fallback
 
-- `generator`: startup fail sớm nếu không kết nối được NATS.
-- `stream-processor`:
+- **Trâm (Generator)**: startup fail sớm nếu không kết nối được NATS.
+- **Lên (Stream Processor)**:
   - nếu NATS không trả message trong timeout, đọc sample JSONL.
   - nếu `ml-api` timeout hoặc `/healthz` không healthy, dùng local mock analyzer.
   - nếu ClickHouse ghi thất bại, dump batch vào file fallback.
-- `analytics`:
+- **Hòa (Analytics)**:
   - luôn `CREATE TABLE IF NOT EXISTS`.
   - nếu `processed_logs` bảng rỗng, auto seed từ `analytics/sql/seed_processed_logs.sql`.

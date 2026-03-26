@@ -28,24 +28,48 @@ Cấu trúc dự án được chia mảnh rõ ràng cho từng vai trò:
 
 ### Chi tiết nhiệm vụ từng thành viên:
 
-- **Tech Lead**: 
-  - Khởi tạo repo, quản lý `infra/`, `contracts/`, `docs/`, và CI/CD.
-  - Thiết lập FastAPI skeleton cho `ml-api/` để có Mock API cho team làm việc.
-  - Cung cấp file DDL/schema. Merge code và review PR.
-- **Người 2 (Generator)**: 
-  - Đọc `CONTRACTS.md` (mục Raw Log) để viết Python script sinh log định dạng JSON định kỳ và đẩy vào NATS topic `logs.raw`. 
-  - Xử lý lỗi: nếu NATS down thì tự fail sớm.
-- **Người 3 (Stream Processor)**: 
-  - Dùng Spark Streaming đọc dữ liệu từ NATS.
-  - Gửi dữ liệu gọi sang HTTP API `POST http://ml-api:8000/analyze`.
-  - Ghi tổng hợp kết quả (kèm nhãn Bot, Dự báo tải, Độ trễ) vào ClickHouse.
-  - Xử lý fallback (đọc file mẫu nếu NATS lỗi, dùng mock analyzer nội bộ nếu ML API sập, dump ra file nếu ClickHouse chưa lên).
-- **Người 4 (ML & AI)**: 
-  - Huấn luyện mô hình phát hiện Bot, dự đoán tải và độ trễ trên Colab/Jupyter (có thể tự tạo dataset theo schema hoặc lấy từ Kaggle).
-  - Đưa mô hình thực tế vào thay thế cho logic Mock hiện tại trong FastAPI của module `ml-api/`.
-- **Người 5 (Analytics)**: 
-  - Không cần chờ luồng dữ liệu thật, dùng ngay dữ liệu mẫu (hoặc script `ensure_seed.py`) để thiết lập các bảng trong ClickHouse.
-  - Xây dựng Dashboard trên Grafana để trực quan hóa đúng 3 bài toán: Bot, Tải, Bất thường.
+#### 1. Tân (Tech Lead / DevOps)
+- **Mục đích**: Xây dựng nền móng kiến trúc, hạ tầng và tiêu chuẩn để 4 người còn lại có thể code song song mà không phải chờ đợi nhau.
+- **Công việc cụ thể cần làm**:
+  - Tạo file `docker-compose.yml` phân bổ NATS, ClickHouse, Grafana trong thư mục `infra/`.
+  - Định nghĩa các Schema JSON và cấu hình DDL mẫu trong `contracts/` và chốt file `CONTRACTS.md`.
+  - Code bộ khung (skeleton) FastAPI trong `ml-api/` để luôn trả về mock data, giúp Lên không bị đứng chờ Luân.
+  - Review và Merge code của mọi người từ các nhánh feature bằng CI/CD Github.
+
+#### 2. Trâm (Data Generator / Producer)
+- **Mục đích**: Chạy một bộ giả lập API Gateway thực thụ, liên tục tạo ra nguồn dữ liệu log (raw logs) để nhồi vào hệ thống.
+- **Công việc cụ thể cần làm**:
+  - Viết code Python (thư mục `generator/`) chạy vòng lặp để tạo JSON dựa theo hợp đồng `contracts/raw-log.schema.json`.
+  - Kết nối và đẩy toàn bộ log JSON đó vào hệ thống thông điệp NATS (topic `logs.raw`).
+  - Lập trình **giả lập các kịch bản thực tế**: 
+    - *Bình thường*: Đều đặn 10-20 req/s, Status 200, Latency thấp.
+    - *Spam (Bot)*: Một vài IP gửi cả trăm req/s, dồn dập vào 1-2 endpoint.
+    - *Sự cố (Anomaly)*: Bỗng nhiên latency toàn hệ thống tăng lên 3-5s, xuất hiện nhiều lỗi 5xx.
+    - *Biến động tải (Forecasting)*: Lưu lượng tăng giảm theo đồ thị để hệ thống AI dự báo.
+  - Cài đặt cơ chế Fail-fast: Tự động tắt script ngay nếu không kết nối được NATS.
+
+#### 3. Lên (Stream Processor / Data Engineer)
+- **Mục đích**: Làm trạm luân chuyển dữ liệu trung tâm: Hứng log thô, lọc, gửi lên AI phân tích, nhận kết quả và lưu về kho.
+- **Công việc cụ thể cần làm**:
+  - Viết Spark Streaming (trong `stream-processor/`) kết nối vào NATS để hút dữ liệu log thô liên tục.
+  - Với mỗi JSON log thô, gọi HTTP `POST http://ml-api:8000/analyze` sang API (của Tân/Luân) để xin AI nhận định rủi ro.
+  - Trộn kết quả AI vào JSON gốc và Insert trực tiếp vào bảng `processed_logs` trên ClickHouse.
+  - Xử lý các kịch bản Fallback (Phòng hờ lỗi): Đọc file mẫu nếu NATS sập, dùng hàm giả lập nội bộ nếu ML API bị sập, ghi tạm dữ liệu ra ổ cứng nếu ClickHouse chưa khởi động xong.
+
+#### 4. Luân (AI/ML Engineer)
+- **Mục đích**: Xây dựng "Bộ não" của hệ thống - làm mô hình Machine Learning để trả lời 3 câu hỏi AIOps dựa trên số liệu log.
+- **Công việc cụ thể cần làm**:
+  - Thu thập dữ liệu log mẫu từ Kaggle hoặc lấy log do Trâm sinh ra để huấn luyện mô hình (trên Python Notebook / Colab).
+  - Khảo sát và train 3 model: Phân loại tính chất Bot, Dự báo Requests/s tương lai, và Phát hiện độ trễ bất thường.
+  - Mang mô hình (`.pkl`, `.onnx`...) lắp vào thư mục mã nguồn `ml-api/`, viết đoạn code xử lý đè lên logic Fake do Tân tạo ra từ trước.
+
+#### 5. Hòa (Data Analytics / BI)
+- **Mục đích**: Trực quan hóa dữ liệu ở bước cuối cùng, giúp người dùng cuối nhìn thấy báo cáo trên đồ thị thời gian thực.
+- **Công việc cụ thể cần làm**:
+  - Không cần đợi ai cả, chạy file giả lập SQL (`ensure_seed.py`) tạo bảng trên ClickHouse và tự băm dữ liệu mẫu vào.
+  - Đăng nhập vào giao diện Grafana (Tân đã dựng sẵn trên nền Docker).
+  - Kết nối dữ liệu Grafana tới database ClickHouse.
+  - Dựng các trang Dashboard báo cáo rõ ràng 3 bài toán: Đồ thị tải đang thay đổi thế nào? IP nào đang Spam (Bot)? Độ trễ chung có đang bất thường không?
 
 ## Quick Start (Dành cho chạy thử local)
 
