@@ -71,33 +71,47 @@ Cấu trúc dự án được chia mảnh rõ ràng cho từng vai trò:
   - Kết nối dữ liệu Grafana tới database ClickHouse.
   - Dựng các trang Dashboard báo cáo rõ ràng 3 bài toán: Đồ thị tải đang thay đổi thế nào? IP nào đang Spam (Bot)? Độ trễ chung có đang bất thường không?
 
-## Quick Start (Dành cho chạy thử local)
+## Hướng dẫn chạy dự án (Local Workflow)
 
-1. Copy `.env.example` thành `.env` và điều chỉnh nếu cần.
-2. Khởi động hạ tầng:
+Dự án hiện tại ưu tiên chạy **Infrastructure trong Docker** và **Dịch vụ (Apps) trực tiếp trên máy host** (Windows/Linux/MacOS) để tối ưu việc phát triển và debug.
 
+### 1. Cài đặt Make (Dành cho Windows)
+Để đơn giản hóa các lệnh chạy, dự án sử dụng `Makefile`. Nếu máy bạn chưa có `make`:
+- **Cách 1 (Chocolatey)**: Chạy `choco install make -y` trong Terminal (Admin).
+- **Cách 2 (Scoop)**: Chạy `scoop install make`.
+- **Cách 3 (Manual)**: Tải file thực thi từ trang chủ GNU Make.
+- **Nếu không muốn cài Make**: Bạn có thể dùng script PowerShell thay thế: `.\scripts\dev.ps1 <lệnh>`.
+
+### 2. Chuẩn bị môi trường
+1. Cài đặt **Python 3.12** và **Docker Desktop**.
+2. Copy `.env.example` thành `.env`:
    ```powershell
-   docker compose -f infra/docker-compose.yml --env-file .env up -d clickhouse nats grafana
+   cp .env.example .env
    ```
 
-3. Khởi động ML mock API:
+### 3. Thao tác chính
+| Chức năng | Lệnh (Make) | Lệnh (Nếu không có Make) |
+| :--- | :--- | :--- |
+| **Cài đặt thư viện** | `make install-all` | `.\scripts\dev.ps1 install-all` |
+| **Bật Hạ tầng (NATS/DB)** | `make infra-up` | `.\scripts\dev.ps1 infra-up` |
+| **Chạy Toàn bộ Apps** | `make start-all` | `.\scripts\dev.ps1 start-all` |
+| **Xem bảng trợ giúp** | `make help` | `.\scripts\dev.ps1 help` |
+| **Dừng Apps ngầm** | `make stop-local` | `.\scripts\dev.ps1 stop-local` |
+| **Tắt Hạ tầng** | `make infra-down` | `.\scripts\dev.ps1 infra-down` |
 
-   ```powershell
-   docker compose -f infra/docker-compose.yml --env-file .env up -d ml-api
-   ```
+### 4. Chạy từng Service (Dành cho Debug)
+Nếu bạn muốn xem log trực tiếp trên Terminal, hãy chạy từng lệnh sau ở các Terminal/Tab khác nhau:
+- **ML API**: `make run-ml-api`
+- **Generator (Sinh log)**: `make run-generator`
+- **Stream Processor**: `make run-stream`
 
-4. Seed dữ liệu mẫu vào ClickHouse (nếu bảng rỗng):
+---
 
-   ```powershell
-   python analytics/scripts/ensure_seed.py
-   ```
-
-5. Chạy các bài test hệ thống (bootstrap tests):
-
-   ```powershell
-   python scripts/validate_contracts.py
-   python -m unittest discover -s tests -p "test_*.py" -v
-   ```
+## Kiểm tra hệ thống (Validation & Test)
+Sau khi bật hạ tầng và các app, hãy chạy:
+1. **Seed dữ liệu mẫu**: `make analytics-seed`
+2. **Kiểm tra hợp đồng**: `make validate`
+3. **Chạy Unit Test**: `make test`
 
 ## The "Zero-Conflict" Workflow
 
@@ -117,3 +131,4 @@ Cấu trúc dự án được chia mảnh rõ ràng cho từng vai trò:
 
 - Tranh thủ xem thêm `docs/team-workflow.md` để hiểu về Dependency Matrix giữa các nhóm.
 - File `deploy.yml` đã thiết lập chế độ secret-gated. Khai báo các secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` để bật tự động deploy.
+

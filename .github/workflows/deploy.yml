@@ -20,4 +20,4 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
             git pull
-            docker compose -f infra/docker-compose.yml --env-file .env up -d --build
+            docker-compose -f infra/docker-compose.yml --env-file .env up -d --remove-orphans nats clickhouse grafana
