@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$Task
 )
@@ -6,18 +6,41 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $LocalStateDir = Join-Path $Root '.local-dev'
+$VenvDir = Join-Path $Root '.venv'
+$VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
+$EnvFile = if (Test-Path (Join-Path $Root '.env')) {
+    Join-Path $Root '.env'
+} else {
+    Join-Path $Root '.env.example'
+}
+
+function Ensure-Venv {
+    if (-not (Test-Path $VenvPython)) {
+        python -m venv $VenvDir
+    }
+}
+
+function Get-Python {
+    if (-not (Test-Path $VenvPython)) {
+        throw "Virtual environment not found. Run '.\\scripts\\dev.ps1 install-all' first."
+    }
+    return $VenvPython
+}
 
 function Invoke-InfraUp {
-    docker-compose -f infra/docker-compose.yml --env-file .env up -d --remove-orphans nats clickhouse grafana
+    docker-compose -f infra/docker-compose.yml --env-file $EnvFile up -d --remove-orphans nats clickhouse grafana
 }
 
 function Invoke-InfraDown {
-    docker-compose -f infra/docker-compose.yml --env-file .env down -v
+    docker-compose -f infra/docker-compose.yml --env-file $EnvFile down -v
 }
 
 function Install-Requirements {
     param([string]$Path)
-    python -m pip install -r $Path
+    Ensure-Venv
+    $python = Get-Python
+    & $python -m pip install --upgrade pip
+    & $python -m pip install -r $Path
 }
 
 function Start-BackgroundService {
@@ -55,6 +78,7 @@ switch ($Task) {
         Write-Host 'Tasks:'
         Write-Host '  infra-up'
         Write-Host '  infra-down'
+        Write-Host '  create-venv'
         Write-Host '  install-generator'
         Write-Host '  install-stream'
         Write-Host '  install-ml-api'
@@ -78,6 +102,10 @@ switch ($Task) {
     'infra-down' {
         Invoke-InfraDown
     }
+    'create-venv' {
+        Ensure-Venv
+        Write-Host "Virtual environment is ready at $VenvDir"
+    }
     'install-generator' {
         Install-Requirements 'generator/requirements.txt'
     }
@@ -93,59 +121,69 @@ switch ($Task) {
         Install-Requirements 'ml-api/requirements.txt'
     }
     'run-ml-api' {
+        $python = Get-Python
         $env:ML_API_PORT = '8000'
         $env:ML_MODELS_DIR = "$Root/ml-api/models"
         $env:PYTHONPATH = "$Root/ml-api/src"
-        python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
+        & $python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
     }
     'run-generator' {
+        $python = Get-Python
         $env:NATS_URL = 'nats://127.0.0.1:4222'
         $env:NATS_SUBJECT = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
-        python -m generator.main
+        & $python -m generator.main
     }
     'run-stream' {
+        $python = Get-Python
         $env:NATS_URL = 'nats://127.0.0.1:4222'
         $env:NATS_SUBJECT = 'logs.raw'
         $env:ML_API_URL = 'http://127.0.0.1:8000'
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
-        $env:CLICKHOUSE_TABLE = 'processed_logs'
-        $env:STREAM_FALLBACK_OUTPUT_PATH = "$Root/stream-processor/output/processed_logs.mock.jsonl"
+        $env:STREAM_FALLBACK_OUTPUT_PATH = "$Root/stream-processor/output/processed_rows.mock.jsonl"
         $env:PYTHONPATH = "$Root/stream-processor/src"
-        python -m stream_processor.main
+        & $python -m stream_processor.main
     }
     'start-ml-api' {
-        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
+        $python = Get-Python
+        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
     }
     'start-generator' {
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; python -m generator.main"
+        $python = Get-Python
+        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -m generator.main"
     }
     'start-stream' {
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:CLICKHOUSE_TABLE='processed_logs'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_logs.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; python -m stream_processor.main"
+        $python = Get-Python
+        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -m stream_processor.main"
     }
     'start-all' {
         Invoke-InfraUp
-        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
+        $python = Get-Python
+        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
         Start-Sleep -Seconds 2
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; python -m generator.main"
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:CLICKHOUSE_TABLE='processed_logs'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_logs.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; python -m stream_processor.main"
+        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -m generator.main"
+        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -m stream_processor.main"
     }
     'stop-local' {
         Stop-BackgroundServices
     }
     'analytics-seed' {
+        $python = Get-Python
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
-        python analytics/scripts/ensure_seed.py
+        & $python analytics/scripts/ensure_seed.py
     }
     'analytics-query' {
+        $python = Get-Python
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
-        python analytics/scripts/query_smoke.py
+        & $python analytics/scripts/query_smoke.py
     }
     'validate' {
-        python scripts/validate_contracts.py
+        $python = Get-Python
+        & $python scripts/validate_contracts.py
     }
     'test' {
-        python -m unittest discover -s tests -p 'test_*.py' -v
+        $python = Get-Python
+        & $python -m unittest discover -s tests -p 'test_*.py' -v
     }
     default {
         throw "Unknown task: $Task"

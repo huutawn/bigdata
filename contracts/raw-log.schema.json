@@ -4,23 +4,52 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "timestamp",
+    "request_id",
+    "session_id",
     "ip",
+    "user_agent",
+    "method",
     "endpoint",
+    "route_template",
     "status",
-    "request_time_ms",
-    "user_agent"
+    "latency_ms"
   ],
   "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "timestamp": {
       "type": "string",
       "format": "date-time"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
     },
     "ip": {
       "type": "string",
       "minLength": 7
     },
+    "user_agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "method": {
+      "type": "string",
+      "enum": ["GET", "POST", "HEAD", "PUT", "DELETE", "PATCH"]
+    },
     "endpoint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "route_template": {
       "type": "string",
       "minLength": 1
     },
@@ -29,13 +58,9 @@
       "minimum": 100,
       "maximum": 599
     },
-    "request_time_ms": {
+    "latency_ms": {
       "type": "integer",
       "minimum": 0
-    },
-    "user_agent": {
-      "type": "string",
-      "minLength": 1
     }
   }
 }

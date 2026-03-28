@@ -9,21 +9,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AnalyticsAssetTests(unittest.TestCase):
-    def test_create_table_sql_contains_expected_columns(self) -> None:
+    def test_create_table_sql_contains_expected_tables(self) -> None:
         ddl = (ROOT / "analytics" / "sql" / "create_processed_logs.sql").read_text(
             encoding="utf-8"
         )
-        self.assertIn("timestamp DateTime", ddl)
-        self.assertIn("predicted_load Int32", ddl)
-        self.assertIn("is_anomaly UInt8", ddl)
+        self.assertIn("CREATE TABLE IF NOT EXISTS processed_logs", ddl)
+        self.assertIn("CREATE TABLE IF NOT EXISTS bot_feature_windows", ddl)
+        self.assertIn("CREATE TABLE IF NOT EXISTS load_forecasts", ddl)
+        self.assertIn("CREATE TABLE IF NOT EXISTS anomaly_alerts", ddl)
 
-    def test_seed_sql_contains_three_bootstrap_scenarios(self) -> None:
+    def test_seed_sql_contains_v2_tables(self) -> None:
         seed = (ROOT / "analytics" / "sql" / "seed_processed_logs.sql").read_text(
             encoding="utf-8"
         )
-        self.assertIn("/api/v1/login", seed)
-        self.assertIn("/api/v1/products", seed)
-        self.assertIn("/api/v1/cart", seed)
+        self.assertIn("INSERT INTO processed_logs", seed)
+        self.assertIn("INSERT INTO bot_feature_windows", seed)
+        self.assertIn("INSERT INTO load_forecasts", seed)
+        self.assertIn("INSERT INTO anomaly_alerts", seed)
 
     def test_dashboard_starter_has_core_panels(self) -> None:
         dashboard = json.loads(
@@ -36,9 +38,9 @@ class AnalyticsAssetTests(unittest.TestCase):
             titles,
             {
                 "Requests per Minute",
-                "Bot Ratio",
-                "Avg Anomaly Latency",
-                "Endpoint Breakdown",
+                "Latest Forecasted Load",
+                "Top Bot Entities",
+                "Endpoint Anomaly Alerts",
             },
         )
 

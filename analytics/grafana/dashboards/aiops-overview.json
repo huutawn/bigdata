@@ -42,7 +42,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -60,11 +60,11 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT if(count() = 0, 0, sum(is_bot) / count()) AS ratio FROM processed_logs",
+          "rawSql": "SELECT predicted_request_count FROM load_forecasts ORDER BY bucket_end DESC LIMIT 1",
           "refId": "A"
         }
       ],
-      "title": "Bot Ratio",
+      "title": "Latest Forecasted Load",
       "type": "stat"
     },
     {
@@ -73,9 +73,7 @@
         "uid": "clickhouse-aiops"
       },
       "fieldConfig": {
-        "defaults": {
-          "unit": "ms"
-        },
+        "defaults": {},
         "overrides": []
       },
       "gridPos": {
@@ -92,12 +90,12 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT avg(latency_ms) AS avg_latency FROM processed_logs WHERE is_anomaly = 1",
+          "rawSql": "SELECT concat(ip, ' / ', user_agent) AS entity, bot_score, number_of_requests, max_barrage FROM bot_feature_windows ORDER BY bot_score DESC LIMIT 10",
           "refId": "A"
         }
       ],
-      "title": "Avg Anomaly Latency",
-      "type": "stat"
+      "title": "Top Bot Entities",
+      "type": "table"
     },
     {
       "datasource": {
@@ -122,11 +120,11 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT endpoint, avg(latency_ms) AS avg_latency, sum(is_bot) AS bot_hits, sum(is_anomaly) AS anomaly_hits FROM processed_logs GROUP BY endpoint ORDER BY avg_latency DESC",
+          "rawSql": "SELECT endpoint, anomaly_score, avg_latency_ms, p99_latency_ms, status_5xx_ratio FROM anomaly_alerts WHERE is_anomaly = 1 ORDER BY anomaly_score DESC",
           "refId": "A"
         }
       ],
-      "title": "Endpoint Breakdown",
+      "title": "Endpoint Anomaly Alerts",
       "type": "table"
     }
   ],
@@ -135,7 +133,7 @@
   "style": "dark",
   "tags": [
     "aiops",
-    "bootstrap"
+    "windowed-v2"
   ],
   "templating": {
     "list": []
@@ -147,5 +145,5 @@
   "timezone": "",
   "title": "AIOps Overview",
   "uid": "aiops-overview",
-  "version": 1
+  "version": 2
 }

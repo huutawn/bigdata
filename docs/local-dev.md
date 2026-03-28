@@ -1,14 +1,16 @@
-# Local-first development
+﻿# Local-first development
 
-This repo now uses Docker only for shared infrastructure:
+This repository uses Docker only for shared infrastructure:
 - NATS
 - ClickHouse
 - Grafana
 
-Application services run directly on the host machine:
+Application services run directly on the host:
 - `ml-api/`
 - `generator/`
 - `stream-processor/`
+
+All local Python commands should run from the project virtual environment at `.venv/`.
 
 ## Prerequisites
 
@@ -17,12 +19,13 @@ Application services run directly on the host machine:
 - PowerShell
 - Optional: GNU Make
 
-## Recommended entrypoint on Windows
+## Recommended Windows flow
 
 Use the PowerShell task runner:
 
 ```powershell
 .\scripts\dev.ps1 help
+.\scripts\dev.ps1 create-venv
 .\scripts\dev.ps1 install-all
 .\scripts\dev.ps1 infra-up
 .\scripts\dev.ps1 start-all
@@ -37,18 +40,25 @@ Stop local app services with:
 .\scripts\dev.ps1 infra-down
 ```
 
-## Optional Makefile targets
+## Optional manual activation
 
-If your machine has GNU Make installed, the same flow is available through:
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+## Optional Make targets
+
+If GNU Make is installed:
 
 ```powershell
 make help
+make create-venv
 make install-all
 make infra-up
 make start-all
 ```
 
-## Run one service in the foreground
+## Run a single service in the foreground
 
 ```powershell
 .\scripts\dev.ps1 run-ml-api
@@ -70,9 +80,9 @@ make start-all
 .\scripts\dev.ps1 test
 ```
 
-## Local host URLs
+## Local URLs
 
-When services run on the host, they use:
+When services run on the host they use:
 - NATS: `nats://127.0.0.1:4222`
 - ML API: `http://127.0.0.1:8000`
 - ClickHouse: `http://127.0.0.1:8123`

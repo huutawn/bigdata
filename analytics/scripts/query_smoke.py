@@ -6,9 +6,10 @@ from urllib import request
 
 CLICKHOUSE_URL = os.getenv("CLICKHOUSE_URL", "http://localhost:8123")
 QUERIES = {
-    "request_count": "SELECT count() FROM processed_logs",
-    "bot_ratio": "SELECT sum(is_bot) FROM processed_logs",
-    "anomaly_ratio": "SELECT sum(is_anomaly) FROM processed_logs",
+    "processed_logs": "SELECT count() FROM processed_logs",
+    "bot_feature_windows": "SELECT count() FROM bot_feature_windows",
+    "load_forecasts": "SELECT count() FROM load_forecasts",
+    "anomaly_alerts": "SELECT count() FROM anomaly_alerts",
 }
 
 

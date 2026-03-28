@@ -14,20 +14,30 @@ ENDPOINTS = [
     "/api/v1/cart",
     "/api/v1/orders",
 ]
-STATUSES = [200, 200, 201, 400, 429, 500, 504]
-USER_AGENTS = [
-    "Mozilla/5.0",
-    "Mozilla/5.0 (Mobile)",
-    "Googlebot/2.1",
-    "curl/8.6.0",
-]
-IPS = [
+HUMAN_IPS = [
     "192.168.1.10",
     "192.168.1.11",
     "10.10.0.5",
+]
+BOT_IPS = [
     "1.2.3.4",
     "1.1.1.1",
 ]
+HUMAN_USER_AGENTS = [
+    "Mozilla/5.0",
+    "Mozilla/5.0 (Mobile)",
+    "Mozilla/5.0 (X11; Linux x86_64)",
+]
+BOT_USER_AGENTS = [
+    "Googlebot/2.1",
+    "curl/8.6.0",
+]
+METHODS_BY_ROUTE = {
+    "/api/v1/login": ["POST"],
+    "/api/v1/products": ["GET", "HEAD"],
+    "/api/v1/cart": ["GET", "POST"],
+    "/api/v1/orders": ["POST", "GET"],
+}
 
 
 @dataclass(frozen=True)
@@ -41,21 +51,56 @@ class GeneratorSettings:
     seed: int = int(os.getenv("GENERATOR_SEED", "7"))
 
 
-def build_log(index: int, rng: random.Random, base_time: datetime | None = None) -> dict[str, object]:
-    timestamp = (base_time or datetime.now(timezone.utc)) + timedelta(seconds=index)
-    endpoint = ENDPOINTS[index % len(ENDPOINTS)]
-    status = STATUSES[(index + rng.randint(0, len(STATUSES) - 1)) % len(STATUSES)]
-    latency = 50 + (index % 5) * 70
-    if status >= 500:
-        latency += 3000
+def _isoformat(timestamp: datetime) -> str:
+    return timestamp.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def build_log(
+    index: int,
+    rng: random.Random,
+    base_time: datetime | None = None,
+) -> dict[str, object]:
+    timestamp = (base_time or datetime.now(timezone.utc)) + timedelta(seconds=index * 3)
+    phase = index % 12
+
+    if phase in {0, 1, 2, 3}:
+        endpoint = "/api/v1/products"
+        method = "GET" if phase != 3 else "HEAD"
+        ip = BOT_IPS[index % len(BOT_IPS)]
+        user_agent = BOT_USER_AGENTS[index % len(BOT_USER_AGENTS)]
+        status = 404 if phase == 3 else 200
+        latency_ms = 70 + phase * 10
+        session_id = f"sess-bot-{index // 4:03d}"
+    elif phase in {4, 5}:
+        endpoint = "/api/v1/orders"
+        method = "POST"
+        ip = HUMAN_IPS[index % len(HUMAN_IPS)]
+        user_agent = HUMAN_USER_AGENTS[index % len(HUMAN_USER_AGENTS)]
+        status = 500 if phase == 4 else 504
+        latency_ms = 3200 + phase * 100
+        session_id = f"sess-incident-{index // 2:03d}"
+    else:
+        endpoint = ENDPOINTS[(index + rng.randint(0, len(ENDPOINTS) - 1)) % len(ENDPOINTS)]
+        method_choices = METHODS_BY_ROUTE[endpoint]
+        method = method_choices[(index + rng.randint(0, len(method_choices) - 1)) % len(method_choices)]
+        ip = HUMAN_IPS[index % len(HUMAN_IPS)]
+        user_agent = HUMAN_USER_AGENTS[index % len(HUMAN_USER_AGENTS)]
+        status = [200, 200, 201, 302][index % 4]
+        latency_ms = 90 + (index % 5) * 35 + rng.randint(0, 25)
+        session_id = f"sess-user-{index % 9:03d}"
 
     return {
-        "timestamp": timestamp.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "ip": IPS[index % len(IPS)],
+        "schema_version": "v2",
+        "timestamp": _isoformat(timestamp),
+        "request_id": f"req-{index:06d}",
+        "session_id": session_id,
+        "ip": ip,
+        "user_agent": user_agent,
+        "method": method,
         "endpoint": endpoint,
+        "route_template": endpoint,
         "status": status,
-        "request_time_ms": latency,
-        "user_agent": USER_AGENTS[index % len(USER_AGENTS)],
+        "latency_ms": latency_ms,
     }
 
 
@@ -75,14 +120,11 @@ async def publish_loop(settings: GeneratorSettings) -> None:
 
     try:
         while True:
-            logs = [
-                build_log(cursor + offset, rng)
-                for offset in range(settings.batch_size)
-            ]
+            logs = [build_log(cursor + offset, rng) for offset in range(settings.batch_size)]
             for log in logs:
                 await nc.publish(settings.subject, json.dumps(log).encode("utf-8"))
             await nc.flush()
-            print(f"Published {len(logs)} logs to {settings.subject}")
+            print(f"Published {len(logs)} v2 raw logs to {settings.subject}")
             cursor += settings.batch_size
             await asyncio.sleep(settings.publish_interval_seconds)
     finally:

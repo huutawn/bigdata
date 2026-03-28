@@ -6,9 +6,13 @@ from typing import Any
 
 
 DEFAULT_BOT_IPS = {"1.1.1.1", "1.2.3.4"}
-DEFAULT_ANOMALY_THRESHOLD_MS = 3000
-DEFAULT_BASE_LOAD_DELTA = 20
-DEFAULT_ANOMALY_LOAD_DELTA = 30
+DEFAULT_BOT_THRESHOLD = 0.55
+DEFAULT_ANOMALY_THRESHOLD = 0.6
+DEFAULT_FORECAST_SMOOTHING = 0.2
+
+
+def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    return max(lower, min(upper, value))
 
 
 def has_model_artifact(models_dir: Path) -> bool:
@@ -28,25 +32,82 @@ def runtime_mode(models_dir: Path) -> str:
     return "model" if has_model_artifact(models_dir) else "mock"
 
 
-def analyze(ip: str, latency_ms: int, current_rps: int, models_dir: Path) -> dict[str, int | bool]:
-    config = load_model_config(models_dir) if runtime_mode(models_dir) == "model" else {}
-    bot_ips = set(config.get("bot_ips", DEFAULT_BOT_IPS))
-    anomaly_threshold_ms = int(
-        config.get("anomaly_threshold_ms", DEFAULT_ANOMALY_THRESHOLD_MS)
-    )
-    base_load_delta = int(config.get("base_load_delta", DEFAULT_BASE_LOAD_DELTA))
-    anomaly_load_delta = int(
-        config.get("anomaly_load_delta", DEFAULT_ANOMALY_LOAD_DELTA)
-    )
+def _config(models_dir: Path) -> dict[str, Any]:
+    return load_model_config(models_dir) if runtime_mode(models_dir) == "model" else {}
 
-    is_bot = ip in bot_ips
-    is_anomaly = latency_ms >= anomaly_threshold_ms
-    predicted_load = max(current_rps, 0) + base_load_delta + (
-        anomaly_load_delta if is_anomaly else 0
-    )
+
+def _model_version(task: str, models_dir: Path) -> str:
+    prefix = "model" if runtime_mode(models_dir) == "model" else "mock"
+    return f"{prefix}-{task}-v2"
+
+
+def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    config = _config(models_dir)
+    bot_ips = set(config.get("bot_ips", DEFAULT_BOT_IPS))
+    threshold = float(config.get("bot_threshold", DEFAULT_BOT_THRESHOLD))
+    entity = payload["entity"]
+    features = payload["features"]
+    user_agent = entity["user_agent"].lower()
+    suspicious_agent = any(token in user_agent for token in ("bot", "crawler", "spider", "curl"))
+
+    score = 0.0
+    score += min(features["number_of_requests"] / 50.0, 0.25)
+    score += clamp(features["repeated_requests"]) * 0.25
+    score += clamp(features["http_response_4xx"]) * 0.15
+    score += clamp(features["http_response_5xx"]) * 0.10
+    score += min(features["max_barrage"] / 20.0, 0.10)
+    score += 0.10 if features["night"] else 0.0
+    score += 0.15 if suspicious_agent else 0.0
+    score += 0.15 if entity["ip"] in bot_ips else 0.0
+
+    bot_score = round(clamp(score), 4)
+    return {
+        "is_bot": bot_score >= threshold,
+        "bot_score": bot_score,
+        "model_version": _model_version("bot", models_dir),
+    }
+
+
+def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    config = _config(models_dir)
+    smoothing = float(config.get("forecast_smoothing", DEFAULT_FORECAST_SMOOTHING))
+    history = payload["history_rps"]
+    features = payload["features"]
+    current = history[-1]
+    previous = history[-2] if len(history) > 1 else current
+    rolling_mean = float(features["rolling_mean_5"])
+    rolling_std = float(features["rolling_std_5"])
+    trend = max(current - previous, 0)
+    predicted = current + trend + int(round(rolling_mean * smoothing + rolling_std * 0.1))
+    predicted = max(predicted, current)
 
     return {
-        "is_bot": is_bot,
-        "predicted_load": predicted_load,
+        "predicted_request_count": int(predicted),
+        "model_version": _model_version("forecast", models_dir),
+    }
+
+
+def predict_anomaly(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    config = _config(models_dir)
+    threshold = float(config.get("anomaly_threshold", DEFAULT_ANOMALY_THRESHOLD))
+    features = payload["features"]
+    baseline_latency = max(float(features["baseline_avg_latency_ms"]), 1.0)
+    baseline_5xx = float(features["baseline_5xx_ratio"])
+    latency_ratio = float(features["avg_latency_ms"]) / baseline_latency
+    p95_ratio = float(features["p95_latency_ms"]) / baseline_latency
+    p99_ratio = float(features["p99_latency_ms"]) / baseline_latency
+    error_delta = max(float(features["status_5xx_ratio"]) - baseline_5xx, 0.0)
+
+    score = 0.0
+    score += clamp((latency_ratio - 1.0) / 2.0) * 0.35
+    score += clamp((p95_ratio - 1.0) / 4.0) * 0.25
+    score += clamp((p99_ratio - 1.0) / 6.0) * 0.20
+    score += clamp(error_delta * 4.0) * 0.20
+
+    anomaly_score = round(clamp(score), 4)
+    is_anomaly = anomaly_score >= threshold or p99_ratio >= 8.0
+    return {
         "is_anomaly": is_anomaly,
+        "anomaly_score": anomaly_score,
+        "model_version": _model_version("anomaly", models_dir),
     }

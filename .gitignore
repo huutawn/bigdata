@@ -26,3 +26,5 @@ ml-api/models/*.bin
 ml-api/models/*.pkl
 ml-api/models/*.joblib
 ml-api/models/*.onnx
+
+.local-dev/

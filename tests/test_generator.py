@@ -20,9 +20,12 @@ class GeneratorTests(unittest.TestCase):
         second = build_log(1, random.Random(7), base_time)
 
         self.assertEqual(first, second)
-        self.assertEqual(first["endpoint"], "/api/v1/products")
-        self.assertIn("timestamp", first)
-        self.assertIn("request_time_ms", first)
+        self.assertEqual(first["schema_version"], "v2")
+        self.assertEqual(first["request_id"], "req-000001")
+        self.assertIn(first["method"], {"GET", "POST", "HEAD", "PUT", "DELETE", "PATCH"})
+        self.assertIn("session_id", first)
+        self.assertIn("route_template", first)
+        self.assertIn("latency_ms", first)
 
 
 if __name__ == "__main__":

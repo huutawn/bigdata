@@ -1,41 +1,51 @@
-# Team Workflow
+# Quy trình làm việc của nhóm (Team Workflow)
 
-## Ownership
+## Quyền sở hữu (Ownership)
 
-- Tech Lead: `infra/`, `contracts/`, `.github/`, `docs/`, root docs.
-- Member 1: `generator/`
-- Member 2: `stream-processor/`
-- Member 3: `ml-api/`
-- Member 4: `analytics/`
+- Tech Lead: `infra/`, `contracts/`, `.github/`, `docs/`, các tài liệu gốc.
+- Thành viên 1: `generator/`
+- Thành viên 2: `stream-processor/`
+- Thành viên 3: `ml-api/`
+- Thành viên 4: `analytics/`
 
-## Branching
+## Phân nhánh (Branching)
 
-- `main`: only Tech Lead merge.
-- `feat/generator`: generator owner.
-- `feat/stream`: stream owner.
-- `feat/ml`: ml owner.
-- `feat/analytics`: analytics owner.
+- `main`: Chỉ Tech Lead mới có quyền merge.
+- `feat/generator`: Chủ sở hữu generator.
+- `feat/stream`: Chủ sở hữu stream.
+- `feat/ml`: Chủ sở hữu ml.
+- `feat/analytics`: Chủ sở hữu analytics.
 
-## Change Boundaries
+## Ranh giới kiến trúc v2 (v2 architecture boundaries)
 
-- Không sửa module của người khác nếu không cần thiết.
-- Schema change phải sửa đồng thời `CONTRACTS.md`, schema JSON và examples.
-- Infrastructure change phải được test lại bằng `docker compose -f infra/docker-compose.yml config`.
+- `generator` chỉ chịu trách nhiệm sản xuất các sự kiện thô (raw events).
+- `stream-processor` chịu trách nhiệm về các cửa sổ đặc trưng, trạng thái runtime, việc ghi vào ClickHouse và các phương án dự phòng (fallbacks).
+- `ml-api` chỉ chịu trách nhiệm về logic dự đoán. Nó nhận các gói dữ liệu đặc trưng (feature payloads), không nhận các sự kiện gateway thô.
+- `analytics` chịu trách nhiệm về ClickHouse DDL, dữ liệu mồi (seed data), các truy vấn kiểm tra (smoke queries) và các bảng điều khiển Grafana.
 
-## Dependency Matrix
+## Quy tắc phối hợp (Coordination rules)
 
-| Team | Input dependency | Cách mở khoá khi dependency chưa sẵn sàng |
+- Các thay đổi về hợp đồng (contract changes) phải cập nhật `CONTRACTS.md`, các sơ đồ JSON (JSON schemas), các ví dụ và việc kiểm tra hợp đồng.
+- Logic giả lập (mock logic) của Stream và ML phải giữ cho hành vi đồng bộ với nhau.
+- Các thay đổi về bảng điều khiển (dashboard) phải được hỗ trợ bởi các bảng đã được nạp dữ liệu và các truy vấn kiểm tra.
+- Nếu các cài đặt cửa sổ Spark (Spark window settings) thay đổi, hãy cập nhật cả các giá trị mặc định trong mã nguồn và tài liệu.
+
+## Ma trận phụ thuộc (Dependency matrix)
+
+| Nhóm | Phụ thuộc đầu vào | Phương án dự phòng khi thiếu phụ thuộc |
 | --- | --- | --- |
-| Generator | NATS | Fail sớm nếu NATS down, không block team khác |
-| Stream | NATS raw logs | Đọc `contracts/examples/raw-logs.sample.jsonl` |
-| Stream | ML API | Dùng local mock analyzer |
-| Stream | ClickHouse | Dump sang `stream-processor/output/processed_logs.mock.jsonl` |
-| Analytics | ClickHouse rows | `ensure_seed.py` tạo bảng và seed dữ liệu mẫu |
-| ML | Model artifact | Chạy mock mode cho tới khi có file trong `ml-api/models/` |
+| Generator | NATS | Thất bại nhanh và thoát (Fail fast and exit) |
+| Stream | Log thô từ NATS | Tải `contracts/examples/raw-logs.sample.jsonl` |
+| Stream | ML API | Sử dụng các hàm dự đoán tất định cục bộ |
+| Stream | ClickHouse | Kết xuất các hàng theo bảng vào `stream-processor/output/processed_rows.mock.jsonl` |
+| Analytics | Các hàng ClickHouse | `ensure_seed.py` tạo và nạp dữ liệu cho tất cả các bảng phân tích |
+| ML | Các tạo vật mô hình (Model artifacts) | Giữ ở chế độ giả lập cho đến khi `ml-api/models/` chứa các tạo vật |
 
-## PR Checklist
+## Danh sách kiểm tra Pull request (Pull request checklist)
 
-- Interface vẫn đúng với contracts hiện tại.
-- Có fallback/mock nếu code của bạn phụ thuộc module khác.
-- Có test cho logic mới hoặc update bootstrap tests.
-- Không sửa file ngoài ownership nếu chẳng đặng đừng.
+- Các hợp đồng vẫn hợp lệ.
+- Các ví dụ về sơ đồ (Schema examples) đã được cập nhật.
+- Hành vi dự phòng (Fallback behavior) vẫn hoạt động.
+- Các bài kiểm tra (Tests) bao phủ được hành vi mới.
+- Các thay đổi nằm trong ranh giới sở hữu trừ khi Tech Lead đã điều phối việc cập nhật.
+

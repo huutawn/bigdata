@@ -4,48 +4,90 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "timestamp",
+    "request_id",
+    "session_id",
     "ip",
+    "user_agent",
+    "method",
     "endpoint",
+    "route_template",
+    "status",
     "latency_ms",
+    "bot_score",
     "is_bot",
     "predicted_load",
+    "anomaly_score",
     "is_anomaly"
   ],
   "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "timestamp": {
       "type": "string",
       "format": "date-time"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
     },
     "ip": {
       "type": "string",
       "minLength": 7
     },
+    "user_agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "method": {
+      "type": "string",
+      "minLength": 1
+    },
     "endpoint": {
       "type": "string",
       "minLength": 1
+    },
+    "route_template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
     },
     "latency_ms": {
       "type": "integer",
       "minimum": 0
     },
+    "bot_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
     "is_bot": {
       "type": "integer",
-      "enum": [
-        0,
-        1
-      ]
+      "enum": [0, 1]
     },
     "predicted_load": {
       "type": "integer",
       "minimum": 0
     },
+    "anomaly_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
     "is_anomaly": {
       "type": "integer",
-      "enum": [
-        0,
-        1
-      ]
+      "enum": [0, 1]
     }
   }
 }

@@ -1,9 +1,18 @@
 {
+  "schema_version": "v2",
   "timestamp": "2026-03-24T10:00:00Z",
+  "request_id": "req-000001",
+  "session_id": "sess-bot-001",
   "ip": "1.2.3.4",
+  "user_agent": "Googlebot/2.1",
+  "method": "GET",
   "endpoint": "/api/v1/products",
-  "latency_ms": 50,
+  "route_template": "/api/v1/products",
+  "status": 404,
+  "latency_ms": 95,
+  "bot_score": 0.91,
   "is_bot": 1,
-  "predicted_load": 120,
+  "predicted_load": 74,
+  "anomaly_score": 0.08,
   "is_anomaly": 0
 }

@@ -1,0 +1,5 @@
+{
+  "is_anomaly": true,
+  "anomaly_score": 0.87,
+  "model_version": "mock-anomaly-v2"
+}

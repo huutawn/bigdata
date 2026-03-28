@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnomalyResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["is_anomaly", "anomaly_score", "model_version"],
+  "properties": {
+    "is_anomaly": {"type": "boolean"},
+    "anomaly_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "model_version": {"type": "string", "minLength": 1}
+  }
+}

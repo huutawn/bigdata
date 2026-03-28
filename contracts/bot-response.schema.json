@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BotResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["is_bot", "bot_score", "model_version"],
+  "properties": {
+    "is_bot": {"type": "boolean"},
+    "bot_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "model_version": {"type": "string", "minLength": 1}
+  }
+}

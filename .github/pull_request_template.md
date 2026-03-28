@@ -1,17 +1,18 @@
-## Summary
+## Tóm tắt (Summary)
 
-- What changed:
-- Why:
+- Những gì đã thay đổi:
+- Tại sao:
 
-## Checklist
+## Danh sách kiểm tra (Checklist)
 
-- [ ] I only changed files inside my ownership boundary, or I explained why cross-module edits were necessary.
-- [ ] I did not change contracts without updating `CONTRACTS.md`, JSON schemas, and examples.
-- [ ] I added or preserved fallback/mock handling for every new cross-team dependency.
-- [ ] I ran the relevant tests locally.
-- [ ] `docker compose -f infra/docker-compose.yml config` still passes.
+- [ ] Tôi chỉ thay đổi các tệp trong phạm vi sở hữu của mình, hoặc tôi đã giải thích lý do tại sao cần chỉnh sửa liên mô-đun.
+- [ ] Tôi không thay đổi các hợp đồng (contracts) mà không cập nhật `CONTRACTS.md`, các sơ đồ JSON và các ví dụ.
+- [ ] Tôi đã thêm hoặc giữ nguyên việc xử lý dự phòng/giả lập (fallback/mock) cho mọi phụ thuộc liên nhóm mới.
+- [ ] Tôi đã chạy các bài kiểm tra liên quan tại cục bộ.
+- [ ] Lệnh `docker compose -f infra/docker-compose.yml config` vẫn vượt qua kiểm tra.
 
-## Risks
+## Rủi ro (Risks)
 
-- Potential regression:
-- Follow-up needed:
+- Khả năng gây lỗi (Potential regression):
+- Cần theo dõi thêm (Follow-up needed):
+

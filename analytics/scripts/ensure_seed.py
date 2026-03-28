@@ -15,6 +15,10 @@ SEED_SQL = (ROOT / "analytics" / "sql" / "seed_processed_logs.sql").read_text(
 CLICKHOUSE_URL = os.getenv("CLICKHOUSE_URL", "http://localhost:8123")
 
 
+def split_statements(sql: str) -> list[str]:
+    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+
 def execute(sql: str) -> str:
     response = request.urlopen(
         request.Request(CLICKHOUSE_URL, data=sql.encode("utf-8"), method="POST"),
@@ -25,12 +29,14 @@ def execute(sql: str) -> str:
 
 
 def main() -> int:
-    execute(CREATE_SQL)
+    for statement in split_statements(CREATE_SQL):
+        execute(statement)
     count = int(execute("SELECT count() FROM processed_logs") or "0")
     if count == 0:
-        execute(SEED_SQL)
+        for statement in split_statements(SEED_SQL):
+            execute(statement)
         count = int(execute("SELECT count() FROM processed_logs") or "0")
-        print(f"Seeded processed_logs with {count} rows.")
+        print(f"Seeded analytics tables. processed_logs={count}")
     else:
         print(f"processed_logs already has {count} rows.")
     return 0

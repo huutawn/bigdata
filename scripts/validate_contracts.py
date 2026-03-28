@@ -48,6 +48,12 @@ def validate_value(schema: dict[str, Any], value: Any, path: str) -> list[str]:
             errors.append(f"{path}: minLength {min_length}")
         if schema.get("format") == "date-time" and not is_valid_datetime(value):
             errors.append(f"{path}: invalid date-time")
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            import re
+
+            if re.fullmatch(pattern, value) is None:
+                errors.append(f"{path}: pattern {pattern}")
 
     if expected_type in {"integer", "number"}:
         minimum = schema.get("minimum")
@@ -73,6 +79,9 @@ def validate_value(schema: dict[str, Any], value: Any, path: str) -> list[str]:
 
     if expected_type == "array":
         item_schema = schema.get("items", {})
+        min_items = schema.get("minItems")
+        if min_items is not None and len(value) < min_items:
+            errors.append(f"{path}: minItems {min_items}")
         for index, item in enumerate(value):
             errors.extend(validate_value(item_schema, item, f"{path}[{index}]"))
 
@@ -103,17 +112,19 @@ def validate_jsonl(schema_path: Path, example_path: Path) -> list[str]:
 def main() -> int:
     pairs = [
         ("raw-log.schema.json", "raw-log.sample.json"),
-        ("analyze-request.schema.json", "analyze-request.sample.json"),
-        ("analyze-response.schema.json", "analyze-response.sample.json"),
+        ("bot-request.schema.json", "bot-request.sample.json"),
+        ("bot-response.schema.json", "bot-response.sample.json"),
+        ("forecast-request.schema.json", "forecast-request.sample.json"),
+        ("forecast-response.schema.json", "forecast-response.sample.json"),
+        ("anomaly-request.schema.json", "anomaly-request.sample.json"),
+        ("anomaly-response.schema.json", "anomaly-response.sample.json"),
         ("processed-log.schema.json", "processed-log.sample.json"),
     ]
 
     errors: list[str] = []
 
     for schema_name, example_name in pairs:
-        errors.extend(
-            validate_file(CONTRACTS_DIR / schema_name, EXAMPLES_DIR / example_name)
-        )
+        errors.extend(validate_file(CONTRACTS_DIR / schema_name, EXAMPLES_DIR / example_name))
 
     errors.extend(
         validate_jsonl(
@@ -123,8 +134,8 @@ def main() -> int:
     )
 
     if errors:
-        for error in errors:
-            print(error)
+        for item in errors:
+            print(item)
         return 1
 
     print("Contracts and examples are valid.")

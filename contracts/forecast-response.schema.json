@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ForecastResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["predicted_request_count", "model_version"],
+  "properties": {
+    "predicted_request_count": {"type": "integer", "minimum": 0},
+    "model_version": {"type": "string", "minLength": 1}
+  }
+}
