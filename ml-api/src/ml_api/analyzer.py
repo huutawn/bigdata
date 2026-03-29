@@ -9,6 +9,23 @@ DEFAULT_BOT_IPS = {"1.1.1.1", "1.2.3.4"}
 DEFAULT_BOT_THRESHOLD = 0.55
 DEFAULT_ANOMALY_THRESHOLD = 0.6
 DEFAULT_FORECAST_SMOOTHING = 0.2
+BOT_MODEL_FILENAME = "bot_model.joblib"
+BOT_MODEL_FEATURE_MAP = {
+    "NUMBER_OF_REQUESTS": "number_of_requests",
+    "TOTAL_DURATION": "total_duration_s",
+    "AVERAGE_TIME": "average_time_ms",
+    "REPEATED_REQUESTS": "repeated_requests",
+    "HTTP_RESPONSE_2XX": "http_response_2xx",
+    "HTTP_RESPONSE_3XX": "http_response_3xx",
+    "HTTP_RESPONSE_4XX": "http_response_4xx",
+    "HTTP_RESPONSE_5XX": "http_response_5xx",
+    "GET_METHOD": "get_method",
+    "POST_METHOD": "post_method",
+    "HEAD_METHOD": "head_method",
+    "OTHER_METHOD": "other_method",
+    "NIGHT": "night",
+    "MAX_BARRAGE": "max_barrage",
+}
 
 
 def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -41,7 +58,7 @@ def _model_version(task: str, models_dir: Path) -> str:
     return f"{prefix}-{task}-v2"
 
 
-def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+def _predict_bot_mock(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
     config = _config(models_dir)
     bot_ips = set(config.get("bot_ips", DEFAULT_BOT_IPS))
     threshold = float(config.get("bot_threshold", DEFAULT_BOT_THRESHOLD))
@@ -66,6 +83,47 @@ def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
         "bot_score": bot_score,
         "model_version": _model_version("bot", models_dir),
     }
+
+
+def _load_joblib(path: Path) -> Any:
+    import joblib
+
+    return joblib.load(path)
+
+
+def _build_bot_model_vector(payload: dict[str, Any], feature_columns: list[str]) -> list[float]:
+    features = payload["features"]
+    vector: list[float] = []
+    for column in feature_columns:
+        mapped_name = BOT_MODEL_FEATURE_MAP[column]
+        vector.append(float(features[mapped_name]))
+    return vector
+
+
+def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    if runtime_mode(models_dir) != "model":
+        return _predict_bot_mock(payload, models_dir)
+
+    config = _config(models_dir)
+    feature_columns = config.get("feature_columns", [])
+    threshold = float(config.get("threshold", DEFAULT_BOT_THRESHOLD))
+    model_path = models_dir / BOT_MODEL_FILENAME
+
+    if not feature_columns or not model_path.exists():
+        return _predict_bot_mock(payload, models_dir)
+
+    try:
+        model = _load_joblib(model_path)
+        vector = _build_bot_model_vector(payload, feature_columns)
+        probability = float(model.predict_proba([vector])[0][1])
+        bot_score = round(clamp(probability), 4)
+        return {
+            "is_bot": bot_score >= threshold,
+            "bot_score": bot_score,
+            "model_version": _model_version("bot", models_dir),
+        }
+    except (ImportError, KeyError, ValueError, AttributeError):
+        return _predict_bot_mock(payload, models_dir)
 
 
 def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
