@@ -137,7 +137,19 @@ async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
 
     messages: list[dict[str, Any]] = []
     event = asyncio.Event()
+<<<<<<< HEAD
     nc = await nats.connect(settings.nats_url)
+=======
+    try:
+        nc = await nats.connect(
+            settings.nats_url,
+            allow_reconnect=False,
+            connect_timeout=settings.poll_timeout_seconds,
+            max_reconnect_attempts=0,
+        )
+    except Exception:
+        return []
+>>>>>>> 78b9a13 (done 2 cai stream va generator vi Tram khong co may)
 
     async def handle_message(msg) -> None:
         messages.append(json.loads(msg.data.decode("utf-8")))
@@ -151,8 +163,15 @@ async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
     except asyncio.TimeoutError:
         pass
     finally:
+<<<<<<< HEAD
         await sub.unsubscribe()
         await nc.drain()
+=======
+        try:
+            await sub.unsubscribe()
+        finally:
+            await nc.drain()
+>>>>>>> 78b9a13 (done 2 cai stream va generator vi Tram khong co may)
 
     return messages
 
