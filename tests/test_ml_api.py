@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -92,6 +93,53 @@ class MlApiAnalyzerTests(unittest.TestCase):
             (models_dir / "model_config.json").write_text("{}", encoding="utf-8")
             self.assertEqual(runtime_mode(models_dir), "model")
 
+    def test_predict_bot_uses_model_artifact_when_available(self) -> None:
+        source_models_dir = ROOT / "ml-api" / "models"
+        if not (source_models_dir / "bot_model.joblib").exists():
+            self.skipTest("bot model artifact is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            (models_dir / "bot_model.joblib").write_bytes(
+                (source_models_dir / "bot_model.joblib").read_bytes()
+            )
+            (models_dir / "model_config.json").write_text(
+                (source_models_dir / "model_config.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+            result = predict_bot(
+                {
+                    "entity": {
+                        "ip": "1.2.3.4",
+                        "session_id": "sess-bot-1",
+                        "user_agent": "Googlebot/2.1",
+                    },
+                    "features": {
+                        "number_of_requests": 42,
+                        "total_duration_s": 58,
+                        "average_time_ms": 120,
+                        "repeated_requests": 0.83,
+                        "http_response_2xx": 0.76,
+                        "http_response_3xx": 0.02,
+                        "http_response_4xx": 0.18,
+                        "http_response_5xx": 0.04,
+                        "get_method": 0.91,
+                        "post_method": 0.07,
+                        "head_method": 0.01,
+                        "other_method": 0.01,
+                        "night": 0,
+                        "max_barrage": 12,
+                    },
+                },
+                models_dir,
+            )
+
+        self.assertIn("bot_score", result)
+        self.assertEqual(result["model_version"], "model-bot-v2")
+        self.assertGreaterEqual(result["bot_score"], 0.0)
+        self.assertLessEqual(result["bot_score"], 1.0)
+
 
 @unittest.skipIf(TestClient is None or create_app is None, "fastapi is not installed")
 class MlApiEndpointTests(unittest.TestCase):
@@ -170,6 +218,29 @@ class MlApiEndpointTests(unittest.TestCase):
         self.assertIn("bot_score", bot_response.json())
         self.assertIn("predicted_request_count", forecast_response.json())
         self.assertIn("anomaly_score", anomaly_response.json())
+
+    def test_healthz_reports_model_mode_when_artifacts_exist(self) -> None:
+        source_models_dir = ROOT / "ml-api" / "models"
+        if not (source_models_dir / "bot_model.joblib").exists():
+            self.skipTest("bot model artifact is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            (models_dir / "bot_model.joblib").write_bytes(
+                (source_models_dir / "bot_model.joblib").read_bytes()
+            )
+            (models_dir / "model_config.json").write_text(
+                (source_models_dir / "model_config.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+            client = TestClient(create_app(Settings(models_dir=models_dir)))
+            health = client.get("/healthz")
+            body = health.json()
+
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(body["mode"], "model")
+        self.assertIn("bot", body["tasks"])
 
 
 if __name__ == "__main__":
