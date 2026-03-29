@@ -59,7 +59,7 @@ class StreamSettings:
     )
     forecast_bucket_seconds: int = int(os.getenv("FORECAST_BUCKET_SECONDS", "60"))
     forecast_history_size: int = int(os.getenv("FORECAST_HISTORY_SIZE", "10"))
-    use_spark_windows: bool = os.getenv("STREAM_USE_SPARK_WINDOWS", "1") == "1"
+    use_spark_windows: bool = os.getenv("STREAM_USE_SPARK_WINDOWS", "0") == "1"
 
 
 @dataclass

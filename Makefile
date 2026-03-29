@@ -1,4 +1,4 @@
-﻿.RECIPEPREFIX := >
+.RECIPEPREFIX := >
 .ONESHELL:
 SHELL := powershell.exe
 .SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
@@ -11,7 +11,7 @@ NATS_URL_LOCAL := nats://127.0.0.1:4222
 ML_API_URL_LOCAL := http://127.0.0.1:8000
 CLICKHOUSE_URL_LOCAL := http://127.0.0.1:8123
 
-.PHONY: help infra-up infra-down create-venv install-generator install-stream install-ml-api install-all \
+.PHONY: help infra-up infra-down create-venv install-generator install-stream install-stream-spark install-ml-api install-all \
         run-generator run-stream run-ml-api start-generator start-stream start-ml-api \
         start-all stop-local analytics-seed analytics-query validate test
 
@@ -20,7 +20,8 @@ help:
 > Write-Host '  infra-up         Start NATS, ClickHouse, and Grafana in Docker'
 > Write-Host '  infra-down       Stop infra containers and remove volumes'
 > Write-Host '  create-venv      Create the local project virtual environment'
-> Write-Host '  install-all      Install Python dependencies for all local app services'
+> Write-Host '  install-all      Install base Python dependencies for all local app services'
+> Write-Host '  install-stream-spark Install optional Spark dependency for stream-processor'
 > Write-Host '  run-ml-api       Run the ML API in the current terminal'
 > Write-Host '  run-generator    Run the generator in the current terminal'
 > Write-Host '  run-stream       Run the stream processor in the current terminal'
@@ -48,6 +49,10 @@ install-generator:
 install-stream:
 > $(MAKE) create-venv
 > & '$(VENV_PYTHON)' -m pip install -r stream-processor/requirements.txt
+
+install-stream-spark:
+> $(MAKE) install-stream
+> & '$(VENV_PYTHON)' -m pip install -r stream-processor/requirements-spark.txt
 
 install-ml-api:
 > $(MAKE) create-venv

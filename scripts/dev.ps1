@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory = $true)]
     [string]$Task
 )
@@ -81,6 +81,7 @@ switch ($Task) {
         Write-Host '  create-venv'
         Write-Host '  install-generator'
         Write-Host '  install-stream'
+        Write-Host '  install-stream-spark'
         Write-Host '  install-ml-api'
         Write-Host '  install-all'
         Write-Host '  run-ml-api'
@@ -111,6 +112,10 @@ switch ($Task) {
     }
     'install-stream' {
         Install-Requirements 'stream-processor/requirements.txt'
+    }
+    'install-stream-spark' {
+        Install-Requirements 'stream-processor/requirements.txt'
+        Install-Requirements 'stream-processor/requirements-spark.txt'
     }
     'install-ml-api' {
         Install-Requirements 'ml-api/requirements.txt'

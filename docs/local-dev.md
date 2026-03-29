@@ -1,4 +1,4 @@
-﻿# Local-first development
+# Local-first development
 
 This repository uses Docker only for shared infrastructure:
 - NATS
@@ -31,6 +31,18 @@ Use the PowerShell task runner:
 .\scripts\dev.ps1 start-all
 ```
 
+The default Windows path is Python-only windowing for `stream-processor`. `install-all` skips `pyspark`, and the local default is `STREAM_USE_SPARK_WINDOWS=0`.
+
+If you want to opt into Spark later:
+
+```powershell
+.\scripts\dev.ps1 install-stream-spark
+$env:STREAM_USE_SPARK_WINDOWS='1'
+.\scripts\dev.ps1 run-stream
+```
+
+See [docs/python-first-streaming.md](python-first-streaming.md) for the full Python-first workflow.
+
 Logs are written to `.local-dev/`.
 
 Stop local app services with:
@@ -56,6 +68,14 @@ make create-venv
 make install-all
 make infra-up
 make start-all
+```
+
+Optional Spark install for the stream processor:
+
+```powershell
+make install-stream-spark
+$env:STREAM_USE_SPARK_WINDOWS='1'
+make run-stream
 ```
 
 ## Run a single service in the foreground
