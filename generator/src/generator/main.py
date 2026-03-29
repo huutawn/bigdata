@@ -49,10 +49,7 @@ class GeneratorSettings:
         os.getenv("GENERATOR_PUBLISH_INTERVAL_SECONDS", "3")
     )
     seed: int = int(os.getenv("GENERATOR_SEED", "7"))
-<<<<<<< HEAD
-=======
     nats_connect_timeout_seconds: int = int(os.getenv("GENERATOR_NATS_TIMEOUT_SECONDS", "2"))
->>>>>>> 78b9a13 (done 2 cai stream va generator vi Tram khong co may)
 
 
 def _isoformat(timestamp: datetime) -> str:
@@ -108,23 +105,12 @@ def build_log(
     }
 
 
-<<<<<<< HEAD
-async def connect_nats(nats_url: str):
-=======
 async def connect_nats(nats_url: str, timeout_seconds: int):
->>>>>>> 78b9a13 (done 2 cai stream va generator vi Tram khong co may)
     try:
         import nats
     except ModuleNotFoundError as exc:
         raise RuntimeError("Missing dependency nats-py. Install generator requirements.") from exc
 
-<<<<<<< HEAD
-    return await nats.connect(nats_url)
-
-
-async def publish_loop(settings: GeneratorSettings) -> None:
-    nc = await connect_nats(settings.nats_url)
-=======
     try:
         return await nats.connect(
             nats_url,
@@ -138,7 +124,6 @@ async def publish_loop(settings: GeneratorSettings) -> None:
 
 async def publish_loop(settings: GeneratorSettings) -> None:
     nc = await connect_nats(settings.nats_url, settings.nats_connect_timeout_seconds)
->>>>>>> 78b9a13 (done 2 cai stream va generator vi Tram khong co may)
     rng = random.Random(settings.seed)
     cursor = 0
 
