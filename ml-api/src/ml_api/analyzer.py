@@ -11,6 +11,7 @@ DEFAULT_ANOMALY_THRESHOLD = 0.6
 DEFAULT_FORECAST_SMOOTHING = 0.2
 BOT_MODEL_FILENAME = "bot_model.joblib"
 FORECAST_MODEL_FILENAME = "forecast_model.joblib"
+ANOMALY_MODEL_FILENAME = "anomaly_model.joblib"
 BOT_MODEL_FEATURE_MAP = {
     "NUMBER_OF_REQUESTS": "number_of_requests",
     "TOTAL_DURATION": "total_duration_s",
@@ -28,6 +29,7 @@ BOT_MODEL_FEATURE_MAP = {
     "MAX_BARRAGE": "max_barrage",
 }
 FORECAST_MODEL_CONFIG_FILENAME = "forecast_model_config.json"
+ANOMALY_MODEL_CONFIG_FILENAME = "anomaly_model_config.json"
 
 
 def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -180,6 +182,35 @@ def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any
 
 
 def predict_anomaly(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    anomaly_config = _load_json_config(models_dir / ANOMALY_MODEL_CONFIG_FILENAME)
+    anomaly_model_path = models_dir / ANOMALY_MODEL_FILENAME
+    feature_columns = anomaly_config.get("feature_columns", [])
+    threshold = float(anomaly_config.get("threshold", DEFAULT_ANOMALY_THRESHOLD))
+
+    if feature_columns and anomaly_model_path.exists():
+        try:
+            model = _load_joblib(anomaly_model_path)
+            features = payload["features"]
+            feature_map = {
+                "request_count": float(features["request_count"]),
+                "avg_latency_ms": float(features["avg_latency_ms"]),
+                "p95_latency_ms": float(features["p95_latency_ms"]),
+                "p99_latency_ms": float(features["p99_latency_ms"]),
+                "status_5xx_ratio": float(features["status_5xx_ratio"]),
+                "baseline_avg_latency_ms": float(features["baseline_avg_latency_ms"]),
+                "baseline_5xx_ratio": float(features["baseline_5xx_ratio"]),
+            }
+            vector = [feature_map[column] for column in feature_columns]
+            probability = float(model.predict_proba([vector])[0][1])
+            anomaly_score = round(clamp(probability), 4)
+            return {
+                "is_anomaly": anomaly_score >= threshold,
+                "anomaly_score": anomaly_score,
+                "model_version": _model_version("anomaly", models_dir),
+            }
+        except (ImportError, KeyError, ValueError, AttributeError):
+            pass
+
     config = _config(models_dir)
     threshold = float(config.get("anomaly_threshold", DEFAULT_ANOMALY_THRESHOLD))
     features = payload["features"]

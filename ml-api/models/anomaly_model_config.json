@@ -1,0 +1,14 @@
+{
+  "model_type": "random_forest_anomaly_v1",
+  "target": "is_anomaly",
+  "feature_columns": [
+    "request_count",
+    "avg_latency_ms",
+    "p95_latency_ms",
+    "p99_latency_ms",
+    "status_5xx_ratio",
+    "baseline_avg_latency_ms",
+    "baseline_5xx_ratio"
+  ],
+  "threshold": 0.5
+}
