@@ -1,0 +1,20 @@
+{
+  "model_type": "random_forest_forecast_v1",
+  "target": "predicted_request_count",
+  "feature_columns": [
+    "history_rps_0",
+    "history_rps_1",
+    "history_rps_2",
+    "history_rps_3",
+    "history_rps_4",
+    "history_rps_5",
+    "history_rps_6",
+    "history_rps_7",
+    "history_rps_8",
+    "history_rps_9",
+    "rolling_mean_5",
+    "rolling_std_5",
+    "hour_of_day",
+    "day_of_week"
+  ]
+}

@@ -1,0 +1,1 @@
+Phần forecast  không dùng file dataset tải sẵn ban đầu, mà lấy dữ liệu trực tiếp từ Wikimedia Analytics API, là nguồn chính thức về pageview traffic. Sau đó tiền xử lý và xuất thành dataset training trên Colab để train model.”

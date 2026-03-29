@@ -10,6 +10,7 @@ DEFAULT_BOT_THRESHOLD = 0.55
 DEFAULT_ANOMALY_THRESHOLD = 0.6
 DEFAULT_FORECAST_SMOOTHING = 0.2
 BOT_MODEL_FILENAME = "bot_model.joblib"
+FORECAST_MODEL_FILENAME = "forecast_model.joblib"
 BOT_MODEL_FEATURE_MAP = {
     "NUMBER_OF_REQUESTS": "number_of_requests",
     "TOTAL_DURATION": "total_duration_s",
@@ -26,6 +27,7 @@ BOT_MODEL_FEATURE_MAP = {
     "NIGHT": "night",
     "MAX_BARRAGE": "max_barrage",
 }
+FORECAST_MODEL_CONFIG_FILENAME = "forecast_model_config.json"
 
 
 def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -100,6 +102,12 @@ def _build_bot_model_vector(payload: dict[str, Any], feature_columns: list[str])
     return vector
 
 
+def _load_json_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
     if runtime_mode(models_dir) != "model":
         return _predict_bot_mock(payload, models_dir)
@@ -127,6 +135,32 @@ def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
 
 
 def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
+    forecast_config = _load_json_config(models_dir / FORECAST_MODEL_CONFIG_FILENAME)
+    forecast_model_path = models_dir / FORECAST_MODEL_FILENAME
+    feature_columns = forecast_config.get("feature_columns", [])
+
+    if feature_columns and forecast_model_path.exists():
+        try:
+            model = _load_joblib(forecast_model_path)
+            history = payload["history_rps"]
+            features = payload["features"]
+            feature_map = {
+                **{f"history_rps_{index}": float(value) for index, value in enumerate(history)},
+                "rolling_mean_5": float(features["rolling_mean_5"]),
+                "rolling_std_5": float(features["rolling_std_5"]),
+                "hour_of_day": float(features["hour_of_day"]),
+                "day_of_week": float(features["day_of_week"]),
+            }
+            vector = [feature_map[column] for column in feature_columns]
+            predicted = float(model.predict([vector])[0])
+            predicted = max(predicted, 0.0)
+            return {
+                "predicted_request_count": int(round(predicted)),
+                "model_version": _model_version("forecast", models_dir),
+            }
+        except (ImportError, KeyError, ValueError, AttributeError):
+            pass
+
     config = _config(models_dir)
     smoothing = float(config.get("forecast_smoothing", DEFAULT_FORECAST_SMOOTHING))
     history = payload["history_rps"]
