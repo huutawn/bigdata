@@ -65,9 +65,9 @@ function Stop-BackgroundServices {
     }
 
     Get-ChildItem $LocalStateDir -Filter '*.pid' | ForEach-Object {
-        $pid = Get-Content $_.FullName
-        if ($pid) {
-            Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+        $processId = Get-Content $_.FullName
+        if ($processId) {
+            Stop-Process -Id ([int]$processId) -Force -ErrorAction SilentlyContinue
         }
         Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
     }
@@ -125,14 +125,14 @@ switch ($Task) {
         $env:ML_API_PORT = '8000'
         $env:ML_MODELS_DIR = "$Root/ml-api/models"
         $env:PYTHONPATH = "$Root/ml-api/src"
-        & $python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
+        & $python -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
     }
     'run-generator' {
         $python = Get-Python
         $env:NATS_URL = 'nats://127.0.0.1:4222'
         $env:NATS_SUBJECT = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
-        & $python -m generator.main
+        & $python -u -m generator.main
     }
     'run-stream' {
         $python = Get-Python
@@ -142,27 +142,27 @@ switch ($Task) {
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
         $env:STREAM_FALLBACK_OUTPUT_PATH = "$Root/stream-processor/output/processed_rows.mock.jsonl"
         $env:PYTHONPATH = "$Root/stream-processor/src"
-        & $python -m stream_processor.main
+        & $python -u -m stream_processor.main
     }
     'start-ml-api' {
         $python = Get-Python
-        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
+        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
     }
     'start-generator' {
         $python = Get-Python
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -m generator.main"
+        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
     }
     'start-stream' {
         $python = Get-Python
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -m stream_processor.main"
+        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'start-all' {
         Invoke-InfraUp
         $python = Get-Python
-        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
+        Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
         Start-Sleep -Seconds 2
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -m generator.main"
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -m stream_processor.main"
+        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'stop-local' {
         Stop-BackgroundServices

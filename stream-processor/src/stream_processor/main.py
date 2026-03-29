@@ -79,6 +79,39 @@ def format_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def format_clickhouse_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def iso_to_clickhouse_datetime(value: str) -> str:
+    return format_clickhouse_datetime(parse_timestamp(value))
+
+
+def shift_logs_to_now(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not records:
+        return []
+    parsed_times: list[datetime] = []
+    for record in records:
+        timestamp = record.get("timestamp")
+        if isinstance(timestamp, str) and timestamp:
+            parsed_times.append(parse_timestamp(timestamp))
+    if not parsed_times:
+        return records
+    now = datetime.now(timezone.utc)
+    delta = now - max(parsed_times)
+    shifted: list[dict[str, Any]] = []
+    for record in records:
+        timestamp = record.get("timestamp")
+        if isinstance(timestamp, str) and timestamp:
+            shifted_time = parse_timestamp(timestamp) + delta
+            updated = dict(record)
+            updated["timestamp"] = format_timestamp(shifted_time)
+            shifted.append(updated)
+        else:
+            shifted.append(record)
+    return shifted
+
+
 def align_window_end(value: datetime, slide_seconds: int) -> datetime:
     epoch_seconds = int(value.astimezone(timezone.utc).timestamp())
     aligned_seconds = ((epoch_seconds + slide_seconds - 1) // slide_seconds) * slide_seconds
@@ -137,7 +170,25 @@ async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
 
     messages: list[dict[str, Any]] = []
     event = asyncio.Event()
-    nc = await nats.connect(settings.nats_url)
+
+    async def ignore_error(_exc) -> None:
+        return None
+
+    try:
+        connect_timeout = max(0.1, float(settings.poll_timeout_seconds))
+        nc = await asyncio.wait_for(
+            nats.connect(
+                settings.nats_url,
+                allow_reconnect=False,
+                connect_timeout=connect_timeout,
+                reconnect_time_wait=0,
+                max_reconnect_attempts=0,
+                error_cb=ignore_error,
+            ),
+            timeout=connect_timeout,
+        )
+    except Exception:
+        return []
 
     async def handle_message(msg) -> None:
         messages.append(json.loads(msg.data.decode("utf-8")))
@@ -151,8 +202,10 @@ async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
     except asyncio.TimeoutError:
         pass
     finally:
-        await sub.unsubscribe()
-        await nc.drain()
+        try:
+            await sub.unsubscribe()
+        finally:
+            await nc.drain()
 
     return messages
 
@@ -667,8 +720,8 @@ def build_bot_feature_rows(
         prediction = predictions[(entity["ip"], entity["session_id"], entity["user_agent"])]
         rows.append(
             {
-                "window_start": payload["window_start"],
-                "window_end": payload["window_end"],
+                "window_start": iso_to_clickhouse_datetime(payload["window_start"]),
+                "window_end": iso_to_clickhouse_datetime(payload["window_end"]),
                 "ip": entity["ip"],
                 "session_id": entity["session_id"],
                 "user_agent": entity["user_agent"],
@@ -695,7 +748,7 @@ def build_load_forecast_rows(
         prediction = predictions[(target["scope"], target["endpoint"])]
         rows.append(
             {
-                "bucket_end": payload["bucket_end"],
+                "bucket_end": iso_to_clickhouse_datetime(payload["bucket_end"]),
                 "scope": target["scope"],
                 "endpoint": target["endpoint"],
                 "history_size": len(payload["history_rps"]),
@@ -718,8 +771,8 @@ def build_anomaly_alert_rows(
         prediction = predictions[endpoint]
         rows.append(
             {
-                "window_start": payload["window_start"],
-                "window_end": payload["window_end"],
+                "window_start": iso_to_clickhouse_datetime(payload["window_start"]),
+                "window_end": iso_to_clickhouse_datetime(payload["window_end"]),
                 "endpoint": endpoint,
                 "request_count": int(features["request_count"]),
                 "avg_latency_ms": float(features["avg_latency_ms"]),
@@ -758,7 +811,7 @@ def build_processed_logs(
         processed.append(
             {
                 "schema_version": record["schema_version"],
-                "timestamp": record["timestamp"],
+                "timestamp": iso_to_clickhouse_datetime(record["timestamp"]),
                 "request_id": record["request_id"],
                 "session_id": record["session_id"],
                 "ip": record["ip"],
@@ -813,7 +866,7 @@ def process_once(
     raw_logs = asyncio.run(fetch_nats_batch(settings))
     source = "nats"
     if not raw_logs:
-        raw_logs = load_sample_logs(settings.raw_log_sample_path)
+        raw_logs = shift_logs_to_now(load_sample_logs(settings.raw_log_sample_path))
         source = "sample"
 
     normalized = [normalize_raw_log(record) for record in raw_logs[: settings.batch_size]]
