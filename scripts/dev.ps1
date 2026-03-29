@@ -65,9 +65,9 @@ function Stop-BackgroundServices {
     }
 
     Get-ChildItem $LocalStateDir -Filter '*.pid' | ForEach-Object {
-        $pid = Get-Content $_.FullName
-        if ($pid) {
-            Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+        $processId = Get-Content $_.FullName
+        if ($processId) {
+            Stop-Process -Id ([int]$processId) -Force -ErrorAction SilentlyContinue
         }
         Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
     }

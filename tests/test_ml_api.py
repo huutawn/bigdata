@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
 import sys
@@ -23,32 +23,16 @@ except ModuleNotFoundError:
     create_app = None
 
 
-def make_scratch_dir(prefix: str) -> Path:
-    candidates: list[Path] = []
-    try:
-        candidates.append(Path(tempfile.mkdtemp(prefix=f"{prefix}-")))
-    except Exception:
-        pass
-
+def make_workspace_dir(prefix: str) -> Path:
     WORKSPACE_TMP.mkdir(parents=True, exist_ok=True)
-    candidates.append(WORKSPACE_TMP / f"{prefix}-{uuid.uuid4().hex}")
-
-    for path in candidates:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            probe_dir = path / ".probe_dir"
-            probe_dir.mkdir(parents=True, exist_ok=True)
-            _ = list(path.iterdir())
-            return path
-        except OSError:
-            continue
-
-    raise RuntimeError("Unable to create a writable scratch directory for tests.")
+    path = WORKSPACE_TMP / f"{prefix}-{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
 
 
 class MlApiAnalyzerTests(unittest.TestCase):
     def test_predict_bot_is_deterministic(self) -> None:
-        models_dir = make_scratch_dir("ml-api-models")
+        models_dir = make_workspace_dir("ml-api-models")
         self.addCleanup(shutil.rmtree, models_dir, ignore_errors=True)
         result = predict_bot(
             {
@@ -80,7 +64,7 @@ class MlApiAnalyzerTests(unittest.TestCase):
         self.assertGreater(result["bot_score"], 0.5)
 
     def test_predict_forecast_and_anomaly_are_deterministic(self) -> None:
-        models_dir = make_scratch_dir("ml-api-models")
+        models_dir = make_workspace_dir("ml-api-models")
         self.addCleanup(shutil.rmtree, models_dir, ignore_errors=True)
         forecast = predict_forecast(
             {
@@ -112,7 +96,7 @@ class MlApiAnalyzerTests(unittest.TestCase):
         self.assertTrue(anomaly["is_anomaly"])
 
     def test_runtime_mode_switches_when_artifact_exists(self) -> None:
-        models_dir = make_scratch_dir("ml-api-models")
+        models_dir = make_workspace_dir("ml-api-models")
         self.addCleanup(shutil.rmtree, models_dir, ignore_errors=True)
         self.assertEqual(runtime_mode(models_dir), "mock")
         (models_dir / "model_config.json").write_text("{}", encoding="utf-8")
@@ -122,7 +106,7 @@ class MlApiAnalyzerTests(unittest.TestCase):
 @unittest.skipIf(TestClient is None or create_app is None, "fastapi is not installed")
 class MlApiEndpointTests(unittest.TestCase):
     def test_healthz_and_prediction_endpoints(self) -> None:
-        models_dir = make_scratch_dir("ml-api-models")
+        models_dir = make_workspace_dir("ml-api-models")
         self.addCleanup(shutil.rmtree, models_dir, ignore_errors=True)
         client = TestClient(create_app(Settings(models_dir=models_dir)))
         health = client.get("/healthz")

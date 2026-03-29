@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import shutil
@@ -19,38 +19,17 @@ from stream_processor.main import (  # noqa: E402
     RuntimeState,
     StreamSettings,
     build_bot_feature_windows_python,
-    build_forecast_requests,
     normalize_raw_log,
     process_once,
     update_runtime_state,
+    build_forecast_requests,
 )
 
-
-def make_scratch_dir(prefix: str) -> Path:
-    candidates: list[Path] = []
-    try:
-        candidates.append(Path(tempfile.mkdtemp(prefix=f"{prefix}-")))
-    except Exception:
-        pass
-
+def make_workspace_dir(prefix: str) -> Path:
     WORKSPACE_TMP.mkdir(parents=True, exist_ok=True)
-    candidates.append(WORKSPACE_TMP / f"{prefix}-{uuid.uuid4().hex}")
-
-    for path in candidates:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            probe = path / ".probe"
-            probe.write_text("ok", encoding="utf-8")
-            _ = probe.read_text(encoding="utf-8")
-            try:
-                probe.unlink()
-            except OSError:
-                pass
-            return path
-        except OSError:
-            continue
-
-    raise RuntimeError("Unable to create a writable scratch directory for tests.")
+    path = WORKSPACE_TMP / f"{prefix}-{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
 
 
 class StreamProcessorTests(unittest.TestCase):
@@ -141,7 +120,7 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertEqual(system_payload["history_rps"][-1], 1)
 
     def test_process_once_falls_back_to_sample_and_file(self) -> None:
-        temp_path = make_scratch_dir("stream-processor")
+        temp_path = make_workspace_dir("stream-processor")
         self.addCleanup(shutil.rmtree, temp_path, ignore_errors=True)
         sample_path = temp_path / "raw-logs.sample.jsonl"
         fallback_path = temp_path / "processed_rows.mock.jsonl"

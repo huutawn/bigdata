@@ -79,6 +79,31 @@ def format_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def shift_logs_to_now(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not records:
+        return []
+    parsed_times: list[datetime] = []
+    for record in records:
+        timestamp = record.get("timestamp")
+        if isinstance(timestamp, str) and timestamp:
+            parsed_times.append(parse_timestamp(timestamp))
+    if not parsed_times:
+        return records
+    now = datetime.now(timezone.utc)
+    delta = now - max(parsed_times)
+    shifted: list[dict[str, Any]] = []
+    for record in records:
+        timestamp = record.get("timestamp")
+        if isinstance(timestamp, str) and timestamp:
+            shifted_time = parse_timestamp(timestamp) + delta
+            updated = dict(record)
+            updated["timestamp"] = format_timestamp(shifted_time)
+            shifted.append(updated)
+        else:
+            shifted.append(record)
+    return shifted
+
+
 def align_window_end(value: datetime, slide_seconds: int) -> datetime:
     epoch_seconds = int(value.astimezone(timezone.utc).timestamp())
     aligned_seconds = ((epoch_seconds + slide_seconds - 1) // slide_seconds) * slide_seconds
@@ -137,12 +162,18 @@ async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
 
     messages: list[dict[str, Any]] = []
     event = asyncio.Event()
+
+    async def ignore_error(_exc) -> None:
+        return None
+
     try:
         nc = await nats.connect(
             settings.nats_url,
             allow_reconnect=False,
             connect_timeout=settings.poll_timeout_seconds,
+            reconnect_time_wait=0,
             max_reconnect_attempts=0,
+            error_cb=ignore_error,
         )
     except Exception:
         return []
@@ -823,7 +854,7 @@ def process_once(
     raw_logs = asyncio.run(fetch_nats_batch(settings))
     source = "nats"
     if not raw_logs:
-        raw_logs = load_sample_logs(settings.raw_log_sample_path)
+        raw_logs = shift_logs_to_now(load_sample_logs(settings.raw_log_sample_path))
         source = "sample"
 
     normalized = [normalize_raw_log(record) for record in raw_logs[: settings.batch_size]]
