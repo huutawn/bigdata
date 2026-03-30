@@ -19,6 +19,7 @@ from stream_processor.main import (  # noqa: E402
     RuntimeState,
     StreamSettings,
     build_bot_feature_windows_python,
+    build_load_forecast_rows,
     normalize_raw_log,
     process_once,
     update_runtime_state,
@@ -122,6 +123,25 @@ class StreamProcessorTests(unittest.TestCase):
 
         self.assertEqual(len(system_payload["history_rps"]), 4)
         self.assertEqual(system_payload["history_rps"][-1], 1)
+        self.assertEqual(system_payload["bucket_end"], "2026-03-24T10:00:00Z")
+        self.assertEqual(system_payload["predicted_bucket_end"], "2026-03-24T10:01:00Z")
+
+        rows = build_load_forecast_rows(
+            payloads,
+            {
+                ("system", ""): {
+                    "predicted_request_count": 3,
+                    "model_version": "mock-forecast-v2",
+                },
+                ("endpoint", "/api/v1/login"): {
+                    "predicted_request_count": 2,
+                    "model_version": "mock-forecast-v2",
+                },
+            },
+        )
+        system_row = next(row for row in rows if row["scope"] == "system")
+        self.assertEqual(system_row["bucket_end"], "2026-03-24 10:00:00")
+        self.assertEqual(system_row["predicted_bucket_end"], "2026-03-24 10:01:00")
 
     def test_process_once_falls_back_to_sample_and_file(self) -> None:
         temp_path = make_workspace_dir("stream-processor")

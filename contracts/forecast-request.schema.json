@@ -3,10 +3,11 @@
   "title": "ForecastRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["feature_version", "bucket_end", "target", "history_rps", "features"],
+  "required": ["feature_version", "bucket_end", "predicted_bucket_end", "target", "history_rps", "features"],
   "properties": {
     "feature_version": {"type": "string", "minLength": 1},
     "bucket_end": {"type": "string", "format": "date-time"},
+    "predicted_bucket_end": {"type": "string", "format": "date-time"},
     "target": {
       "type": "object",
       "additionalProperties": false,

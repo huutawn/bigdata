@@ -6,6 +6,7 @@
   "graphTooltip": 0,
   "panels": [
     {
+      "description": "Live request volume written into processed_logs for the currently selected dashboard time range.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse-aiops"
@@ -28,7 +29,7 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT toStartOfMinute(timestamp) AS time, count() AS requests FROM processed_logs GROUP BY time ORDER BY time",
+          "rawSql": "SELECT toStartOfMinute(timestamp) AS time, count() AS requests FROM processed_logs WHERE $__timeFilter(timestamp) GROUP BY time ORDER BY time",
           "refId": "A"
         }
       ],
@@ -36,13 +37,15 @@
       "type": "timeseries"
     },
     {
+      "description": "Latest system-wide forecast for the next bucket. With the default config, the stream processor uses the last 10 one-minute buckets to estimate request volume for the next minute.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse-aiops"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -60,14 +63,15 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT predicted_request_count FROM load_forecasts ORDER BY bucket_end DESC LIMIT 1",
+          "rawSql": "SELECT predicted_request_count FROM load_forecasts WHERE scope = 'system' AND $__timeFilter(predicted_bucket_end) ORDER BY predicted_bucket_end DESC LIMIT 1",
           "refId": "A"
         }
       ],
-      "title": "Latest Forecasted Load",
+      "title": "Next Minute Forecast",
       "type": "stat"
     },
     {
+      "description": "Highest bot-risk entities within the selected time range, deduplicated by ip and user agent.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse-aiops"
@@ -90,7 +94,7 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT concat(ip, ' / ', user_agent) AS entity, bot_score, number_of_requests, max_barrage FROM bot_feature_windows ORDER BY bot_score DESC LIMIT 10",
+          "rawSql": "SELECT concat(ip, ' / ', user_agent) AS entity, max(bot_score) AS bot_score, max(number_of_requests) AS number_of_requests, max(max_barrage) AS max_barrage FROM bot_feature_windows WHERE is_bot = 1 AND $__timeFilter(window_end) GROUP BY entity ORDER BY bot_score DESC, number_of_requests DESC LIMIT 10",
           "refId": "A"
         }
       ],
@@ -98,6 +102,7 @@
       "type": "table"
     },
     {
+      "description": "Endpoints with the strongest anomaly signals in the selected time range, grouped by endpoint instead of repeated raw rows.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse-aiops"
@@ -120,7 +125,7 @@
             "uid": "clickhouse-aiops"
           },
           "format": 1,
-          "rawSql": "SELECT endpoint, anomaly_score, avg_latency_ms, p99_latency_ms, status_5xx_ratio FROM anomaly_alerts WHERE is_anomaly = 1 ORDER BY anomaly_score DESC",
+          "rawSql": "SELECT endpoint, max(anomaly_score) AS anomaly_score, argMax(avg_latency_ms, window_end) AS avg_latency_ms, argMax(p99_latency_ms, window_end) AS p99_latency_ms, argMax(status_5xx_ratio, window_end) AS status_5xx_ratio FROM anomaly_alerts WHERE is_anomaly = 1 AND $__timeFilter(window_end) GROUP BY endpoint ORDER BY anomaly_score DESC, endpoint ASC LIMIT 10",
           "refId": "A"
         }
       ],

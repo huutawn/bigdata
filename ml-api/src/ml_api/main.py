@@ -69,6 +69,7 @@ class ForecastFeatures(BaseModel):
 class ForecastRequest(BaseModel):
     feature_version: str = Field(min_length=1)
     bucket_end: str = Field(min_length=1)
+    predicted_bucket_end: str = Field(min_length=1)
     target: ForecastTarget
     history_rps: list[int] = Field(min_length=1)
     features: ForecastFeatures

@@ -110,6 +110,46 @@ def _load_json_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _predict_forecast_heuristic(
+    payload: dict[str, Any],
+    models_dir: Path,
+    model_version: str | None = None,
+) -> dict[str, Any]:
+    config = _config(models_dir)
+    smoothing = float(config.get("forecast_smoothing", DEFAULT_FORECAST_SMOOTHING))
+    history = payload["history_rps"]
+    features = payload["features"]
+    current = history[-1]
+    previous = history[-2] if len(history) > 1 else current
+    rolling_mean = float(features["rolling_mean_5"])
+    rolling_std = float(features["rolling_std_5"])
+    trend = max(current - previous, 0)
+    predicted = current + trend + int(round(rolling_mean * smoothing + rolling_std * 0.1))
+    predicted = max(predicted, current)
+    return {
+        "predicted_request_count": int(predicted),
+        "model_version": model_version or _model_version("forecast", models_dir),
+    }
+
+
+def _forecast_guardrail_upper_bound(payload: dict[str, Any], heuristic_prediction: int) -> int:
+    history = payload["history_rps"]
+    features = payload["features"]
+    current = int(history[-1])
+    recent_max = max(int(value) for value in history)
+    rolling_mean = float(features["rolling_mean_5"])
+    rolling_std = float(features["rolling_std_5"])
+    return int(
+        max(
+            50,
+            current + 25,
+            recent_max * 8,
+            rolling_mean * 6 + rolling_std * 6,
+            heuristic_prediction * 6,
+        )
+    )
+
+
 def predict_bot(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:
     if runtime_mode(models_dir) != "model":
         return _predict_bot_mock(payload, models_dir)
@@ -156,6 +196,16 @@ def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any
             vector = [feature_map[column] for column in feature_columns]
             predicted = float(model.predict([vector])[0])
             predicted = max(predicted, 0.0)
+            heuristic = _predict_forecast_heuristic(
+                payload,
+                models_dir,
+                model_version="guarded-forecast-v2",
+            )
+            if predicted > _forecast_guardrail_upper_bound(
+                payload,
+                heuristic["predicted_request_count"],
+            ):
+                return heuristic
             return {
                 "predicted_request_count": int(round(predicted)),
                 "model_version": _model_version("forecast", models_dir),
@@ -163,22 +213,7 @@ def predict_forecast(payload: dict[str, Any], models_dir: Path) -> dict[str, Any
         except (ImportError, KeyError, ValueError, AttributeError):
             pass
 
-    config = _config(models_dir)
-    smoothing = float(config.get("forecast_smoothing", DEFAULT_FORECAST_SMOOTHING))
-    history = payload["history_rps"]
-    features = payload["features"]
-    current = history[-1]
-    previous = history[-2] if len(history) > 1 else current
-    rolling_mean = float(features["rolling_mean_5"])
-    rolling_std = float(features["rolling_std_5"])
-    trend = max(current - previous, 0)
-    predicted = current + trend + int(round(rolling_mean * smoothing + rolling_std * 0.1))
-    predicted = max(predicted, current)
-
-    return {
-        "predicted_request_count": int(predicted),
-        "model_version": _model_version("forecast", models_dir),
-    }
+    return _predict_forecast_heuristic(payload, models_dir)
 
 
 def predict_anomaly(payload: dict[str, Any], models_dir: Path) -> dict[str, Any]:

@@ -37,6 +37,7 @@ ORDER BY (window_end, ip, session_id);
 
 CREATE TABLE IF NOT EXISTS load_forecasts (
     bucket_end DateTime,
+    predicted_bucket_end DateTime,
     scope String,
     endpoint String,
     history_size Int32,
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS load_forecasts (
     predicted_request_count Int32,
     model_version String
 ) ENGINE = MergeTree()
-ORDER BY (bucket_end, scope, endpoint);
+ORDER BY (predicted_bucket_end, scope, endpoint);
 
 CREATE TABLE IF NOT EXISTS anomaly_alerts (
     window_start DateTime,

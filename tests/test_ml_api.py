@@ -18,7 +18,7 @@ from ml_api.analyzer import predict_anomaly, predict_bot, predict_forecast, runt
 try:
     from fastapi.testclient import TestClient
     from ml_api.main import Settings, create_app
-except ModuleNotFoundError:
+except (ModuleNotFoundError, RuntimeError):
     TestClient = None
     Settings = None
     create_app = None
@@ -150,6 +150,38 @@ class MlApiAnalyzerTests(unittest.TestCase):
         self.assertGreaterEqual(result["bot_score"], 0.0)
         self.assertLessEqual(result["bot_score"], 1.0)
 
+    def test_predict_forecast_guards_small_demo_traffic_against_huge_model_output(self) -> None:
+        source_models_dir = ROOT / "ml-api" / "models"
+        if not (source_models_dir / "forecast_model.joblib").exists():
+            self.skipTest("forecast model artifact is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            (models_dir / "forecast_model.joblib").write_bytes(
+                (source_models_dir / "forecast_model.joblib").read_bytes()
+            )
+            (models_dir / "forecast_model_config.json").write_text(
+                (source_models_dir / "forecast_model_config.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+            result = predict_forecast(
+                {
+                    "history_rps": [0, 0, 1, 1, 2, 2, 3, 2, 4, 3],
+                    "features": {
+                        "rolling_mean_5": 2.8,
+                        "rolling_std_5": 0.8,
+                        "hour_of_day": 10,
+                        "day_of_week": 1,
+                    },
+                },
+                models_dir,
+            )
+
+        self.assertEqual(result["model_version"], "guarded-forecast-v2")
+        self.assertGreaterEqual(result["predicted_request_count"], 3)
+        self.assertLessEqual(result["predicted_request_count"], 50)
+
 
 @unittest.skipIf(TestClient is None or create_app is None, "fastapi is not installed")
 class MlApiEndpointTests(unittest.TestCase):
@@ -192,6 +224,7 @@ class MlApiEndpointTests(unittest.TestCase):
             json={
                 "feature_version": "v2",
                 "bucket_end": "2026-03-24T10:01:00Z",
+                "predicted_bucket_end": "2026-03-24T10:02:00Z",
                 "target": {"scope": "system", "endpoint": ""},
                 "history_rps": [10, 12, 14, 16, 20],
                 "features": {

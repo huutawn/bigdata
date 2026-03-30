@@ -12,12 +12,14 @@ This guide shows the simplest way to run the project on Linux and manually verif
 ## Quick start with Make
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 make create-venv
 make install-all
 make infra-up
 make start-all
 ```
+
+`make` on Linux now uses Bash-native recipes. The earlier `powershell.exe` error happened because the old `Makefile` was Windows-only.
 
 This starts:
 
@@ -40,7 +42,7 @@ make infra-down
 Create the virtual environment and install dependencies:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -60,7 +62,7 @@ Start the application services in separate terminals.
 Terminal 1, ML API:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 source .venv/bin/activate
 PYTHONPATH=$PWD/ml-api/src ML_MODELS_DIR=$PWD/ml-api/models python -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
 ```
@@ -68,15 +70,94 @@ PYTHONPATH=$PWD/ml-api/src ML_MODELS_DIR=$PWD/ml-api/models python -m uvicorn ml
 Terminal 2, generator:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 source .venv/bin/activate
 PYTHONPATH=$PWD/generator/src NATS_URL=nats://127.0.0.1:4222 NATS_SUBJECT=logs.raw python -m generator.main
+```
+
+If you want to replace the synthetic generator with a real access-log file, stop the default generator and run the replay module instead.
+
+For a local file already copied into the repo, for example `./access.log`, run:
+
+```bash
+cd /path/to/bigdata
+source .venv/bin/activate
+PYTHONPATH=$PWD/generator/src \
+NATS_URL=nats://127.0.0.1:4222 \
+NATS_SUBJECT=logs.raw \
+python -m generator.replay_access_logs --input-dir "$PWD/access.log" --time-scale 600 --repeat
+```
+
+Preview the first normalized records without publishing to NATS:
+
+```bash
+PYTHONPATH=$PWD/generator/src \
+python -m generator.replay_access_logs \
+  --input-dir "$PWD/access.log" \
+  --max-records 50 \
+  --output-jsonl .local-dev/access-preview.jsonl \
+  --skip-publish
+```
+
+The replay module accepts either a single file path such as `access.log` or a directory containing many `.log`, `.txt`, or `.gz` files.
+
+If your source really comes from a directory returned by Kaggle, that still works too:
+
+This works with a directory returned by:
+
+```python
+import kagglehub
+
+path = kagglehub.dataset_download("eliasdabbas/web-server-acc-logs")
+```
+
+If your `kaggle.json` is stored in the project root instead of `~/.kaggle/kaggle.json`, make sure it is owner-only:
+
+```bash
+chmod 600 kaggle.json
+```
+
+And point Kaggle to the current directory before downloading:
+
+```bash
+export KAGGLE_CONFIG_DIR=$PWD
+```
+
+Then run:
+
+```bash
+cd /path/to/bigdata
+source .venv/bin/activate
+KAGGLE_LOG_DIR=/path/returned/by/kagglehub
+export KAGGLE_CONFIG_DIR=$PWD
+PYTHONPATH=$PWD/generator/src \
+NATS_URL=nats://127.0.0.1:4222 \
+NATS_SUBJECT=logs.raw \
+python -m generator.replay_access_logs --input-dir "$KAGGLE_LOG_DIR" --time-scale 600 --repeat
+```
+
+What this replay module does:
+
+- finds `.log`, `.txt`, or `.gz` access-log files under the dataset directory
+- parses combined Apache/Nginx-style lines into the repo's `raw-log v2` schema
+- rebases the old 2019 timestamps to "now" so Grafana shows live data
+- synthesizes `request_id`, `session_id`, `route_template`, and `latency_ms`
+
+If you only want to preview the normalized output without publishing to NATS:
+
+```bash
+PYTHONPATH=$PWD/generator/src \
+python -m generator.replay_access_logs \
+  --input-dir "$KAGGLE_LOG_DIR" \
+  --max-records 50 \
+  --output-jsonl .local-dev/kaggle.raw.jsonl \
+  --skip-publish
 ```
 
 Terminal 3, stream processor:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 source .venv/bin/activate
 PYTHONPATH=$PWD/stream-processor/src \
 NATS_URL=nats://127.0.0.1:4222 \
@@ -157,7 +238,7 @@ curl -X POST http://127.0.0.1:8000/predict/bot \
 If Grafana is empty, seed data manually:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 source .venv/bin/activate
 CLICKHOUSE_URL=http://127.0.0.1:8123 python analytics/scripts/ensure_seed.py
 CLICKHOUSE_URL=http://127.0.0.1:8123 python analytics/scripts/query_smoke.py
@@ -196,7 +277,7 @@ If the dashboard is empty:
 Run the automated test suite:
 
 ```bash
-cd /path/to/bigdata_pr
+cd /path/to/bigdata
 source .venv/bin/activate
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
