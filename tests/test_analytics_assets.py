@@ -38,7 +38,7 @@ class AnalyticsAssetTests(unittest.TestCase):
             titles,
             {
                 "Requests per Minute",
-                "Latest Forecasted Load",
+                "Next Minute Forecast",
                 "Top Bot Entities",
                 "Endpoint Anomaly Alerts",
             },

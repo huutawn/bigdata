@@ -1,0 +1,21 @@
+{
+  "model_type": "random_forest_bot_v1",
+  "target": "is_bot",
+  "feature_columns": [
+    "NUMBER_OF_REQUESTS",
+    "TOTAL_DURATION",
+    "AVERAGE_TIME",
+    "REPEATED_REQUESTS",
+    "HTTP_RESPONSE_2XX",
+    "HTTP_RESPONSE_3XX",
+    "HTTP_RESPONSE_4XX",
+    "HTTP_RESPONSE_5XX",
+    "GET_METHOD",
+    "POST_METHOD",
+    "HEAD_METHOD",
+    "OTHER_METHOD",
+    "NIGHT",
+    "MAX_BARRAGE"
+  ],
+  "threshold": 0.5
+}

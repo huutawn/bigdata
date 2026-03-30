@@ -1,4 +1,5 @@
 .env
+kaggle.json
 .venv/
 venv/
 __pycache__/
@@ -13,7 +14,7 @@ coverage.xml
 dist/
 build/
 *.egg-info/
-
+access.log
 .idea/
 .vscode/
 Thumbs.db

@@ -59,7 +59,7 @@ class StreamSettings:
     )
     forecast_bucket_seconds: int = int(os.getenv("FORECAST_BUCKET_SECONDS", "60"))
     forecast_history_size: int = int(os.getenv("FORECAST_HISTORY_SIZE", "10"))
-    use_spark_windows: bool = os.getenv("STREAM_USE_SPARK_WINDOWS", "1") == "1"
+    use_spark_windows: bool = os.getenv("STREAM_USE_SPARK_WINDOWS", "0") == "1"
 
 
 @dataclass
@@ -556,6 +556,7 @@ def build_forecast_requests(
         return []
     latest = max(record["event_time"] for record in raw_logs)
     latest_bucket_end = align_window_end(latest, settings.forecast_bucket_seconds)
+    predicted_bucket_end = latest_bucket_end + timedelta(seconds=settings.forecast_bucket_seconds)
     targets = {("system", "")}
     targets.update(("endpoint", record["endpoint"]) for record in raw_logs)
     payloads: list[dict[str, Any]] = []
@@ -574,13 +575,14 @@ def build_forecast_requests(
             {
                 "feature_version": "v2",
                 "bucket_end": format_timestamp(latest_bucket_end),
+                "predicted_bucket_end": format_timestamp(predicted_bucket_end),
                 "target": {"scope": scope, "endpoint": endpoint},
                 "history_rps": history,
                 "features": {
                     "rolling_mean_5": round(mean, 3),
                     "rolling_std_5": round(math.sqrt(variance), 3),
-                    "hour_of_day": latest_bucket_end.hour,
-                    "day_of_week": latest_bucket_end.weekday(),
+                    "hour_of_day": predicted_bucket_end.hour,
+                    "day_of_week": predicted_bucket_end.weekday(),
                 },
             }
         )
@@ -705,7 +707,8 @@ def build_load_forecast_rows(
         prediction = predictions[(target["scope"], target["endpoint"])]
         rows.append(
             {
-                "bucket_end": payload["bucket_end"],
+                "bucket_end": iso_to_clickhouse_datetime(payload["bucket_end"]),
+                "predicted_bucket_end": iso_to_clickhouse_datetime(payload["predicted_bucket_end"]),
                 "scope": target["scope"],
                 "endpoint": target["endpoint"],
                 "history_size": len(payload["history_rps"]),

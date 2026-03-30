@@ -81,6 +81,10 @@ Tất cả các lệnh ứng dụng cục bộ hiện đều sử dụng môi tr
 .\scripts\dev.ps1 start-all
 ```
 
+Windows local development now defaults to Python windowing for `stream-processor`.
+`install-all` no longer installs `pyspark`; opt into Spark only when needed.
+See [docs/python-first-streaming.md](docs/python-first-streaming.md) for the Windows workflow.
+
 Dừng các dịch vụ cục bộ bằng:
 
 ```powershell
@@ -105,6 +109,14 @@ make create-venv
 make install-all
 make infra-up
 make start-all
+```
+
+Optional Spark on Windows:
+
+```powershell
+make install-stream-spark
+$env:STREAM_USE_SPARK_WINDOWS='1'
+make run-stream
 ```
 
 ### Nếu thiếu `make`

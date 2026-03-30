@@ -8,8 +8,8 @@ INSERT INTO bot_feature_windows VALUES
     (now() - 60, now(), '192.168.1.10', 'sess-user-002', 'Mozilla/5.0', 9, 0.22, 3, 0.00, 0.11, 0.12, 0, 'mock-bot-v2');
 
 INSERT INTO load_forecasts VALUES
-    (now(), 'system', '', 10, 55, 74, 'mock-forecast-v2'),
-    (now(), 'endpoint', '/api/v1/products', 10, 24, 31, 'mock-forecast-v2');
+    (now(), now() + toIntervalSecond(60), 'system', '', 10, 55, 74, 'mock-forecast-v2'),
+    (now(), now() + toIntervalSecond(60), 'endpoint', '/api/v1/products', 10, 24, 31, 'mock-forecast-v2');
 
 INSERT INTO anomaly_alerts VALUES
     (now() - 60, now(), '/api/v1/orders', 17, 420.0, 1800.0, 3200.0, 0.12, 180.0, 0.92, 1, 'mock-anomaly-v2'),
