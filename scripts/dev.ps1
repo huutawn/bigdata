@@ -13,6 +13,14 @@ $EnvFile = if (Test-Path (Join-Path $Root '.env')) {
 } else {
     Join-Path $Root '.env.example'
 }
+$ReplayInput = if ($env:GENERATOR_SOURCE_DIR) { $env:GENERATOR_SOURCE_DIR } else { Join-Path $Root 'access.log' }
+$ReplayTimeScale = if ($env:GENERATOR_REPLAY_TIME_SCALE) { $env:GENERATOR_REPLAY_TIME_SCALE } else { '600' }
+$ReplaySessionGapMinutes = if ($env:GENERATOR_SESSION_GAP_MINUTES) { $env:GENERATOR_SESSION_GAP_MINUTES } else { '15' }
+$ReplayFlushEvery = if ($env:GENERATOR_REPLAY_FLUSH_EVERY) { $env:GENERATOR_REPLAY_FLUSH_EVERY } else { '100' }
+$ReplayProgressEvery = if ($env:GENERATOR_REPLAY_PROGRESS_EVERY) { $env:GENERATOR_REPLAY_PROGRESS_EVERY } else { '1000' }
+$ReplayMaxRecords = if ($env:GENERATOR_REPLAY_MAX_RECORDS) { $env:GENERATOR_REPLAY_MAX_RECORDS } else { '0' }
+$ReplayOutputJsonl = $env:GENERATOR_REPLAY_OUTPUT_JSONL
+$ReplayRepeat = if ($env:GENERATOR_REPLAY_REPEAT) { $env:GENERATOR_REPLAY_REPEAT } else { '0' }
 
 function Ensure-Venv {
     if (-not (Test-Path $VenvPython)) {
@@ -73,6 +81,54 @@ function Stop-BackgroundServices {
     }
 }
 
+function Get-ReplayArguments {
+    $arguments = @(
+        '-u',
+        '-m',
+        'generator.replay_access_logs',
+        '--input-dir',
+        $ReplayInput,
+        '--time-scale',
+        $ReplayTimeScale,
+        '--session-gap-minutes',
+        $ReplaySessionGapMinutes,
+        '--flush-every',
+        $ReplayFlushEvery,
+        '--progress-every',
+        $ReplayProgressEvery,
+        '--max-records',
+        $ReplayMaxRecords
+    )
+
+    if ($ReplayOutputJsonl) {
+        $arguments += @('--output-jsonl', $ReplayOutputJsonl)
+    }
+    if ($ReplayRepeat -eq '1') {
+        $arguments += '--repeat'
+    }
+
+    return $arguments
+}
+
+function Get-ReplayCommand {
+    param([string]$Python)
+
+    $quotedArguments = (Get-ReplayArguments) | ForEach-Object {
+        if ($_ -match '[\s"]') {
+            '"' + ($_ -replace '"', '\"') + '"'
+        } else {
+            $_
+        }
+    }
+
+    return @(
+        "`$env:NATS_URL='nats://127.0.0.1:4222'",
+        "`$env:NATS_SUBJECT='logs.raw'",
+        "`$env:PYTHONPATH='$Root/generator/src'",
+        "& '$Python' $($quotedArguments -join ' ')"
+    ) -join '; '
+}
+
 switch ($Task) {
     'help' {
         Write-Host 'Tasks:'
@@ -86,9 +142,11 @@ switch ($Task) {
         Write-Host '  install-all'
         Write-Host '  run-ml-api'
         Write-Host '  run-generator'
+        Write-Host '  run-replay'
         Write-Host '  run-stream'
         Write-Host '  start-ml-api'
         Write-Host '  start-generator'
+        Write-Host '  start-replay'
         Write-Host '  start-stream'
         Write-Host '  start-all'
         Write-Host '  stop-local'
@@ -139,6 +197,13 @@ switch ($Task) {
         $env:PYTHONPATH = "$Root/generator/src"
         & $python -u -m generator.main
     }
+    'run-replay' {
+        $python = Get-Python
+        $env:NATS_URL = 'nats://127.0.0.1:4222'
+        $env:NATS_SUBJECT = 'logs.raw'
+        $env:PYTHONPATH = "$Root/generator/src"
+        & $python @(Get-ReplayArguments)
+    }
     'run-stream' {
         $python = Get-Python
         $env:NATS_URL = 'nats://127.0.0.1:4222'
@@ -156,6 +221,10 @@ switch ($Task) {
     'start-generator' {
         $python = Get-Python
         Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+    }
+    'start-replay' {
+        $python = Get-Python
+        Start-BackgroundService 'replay' (Get-ReplayCommand -Python $python)
     }
     'start-stream' {
         $python = Get-Python

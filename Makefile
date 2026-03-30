@@ -9,8 +9,17 @@ ML_API_URL_LOCAL := http://127.0.0.1:8000
 CLICKHOUSE_URL_LOCAL := http://127.0.0.1:8123
 
 .PHONY: help infra-up infra-down create-venv install-generator install-stream install-stream-spark install-ml-api install-all \
-        run-generator run-stream run-ml-api start-generator start-stream start-ml-api \
+        run-generator run-replay run-stream run-ml-api start-generator start-replay start-stream start-ml-api \
         start-all stop-local analytics-seed analytics-query validate test
+
+REPLAY_INPUT ?= $(ROOT)/access.log
+REPLAY_TIME_SCALE ?= 600
+REPLAY_SESSION_GAP_MINUTES ?= 15
+REPLAY_FLUSH_EVERY ?= 100
+REPLAY_PROGRESS_EVERY ?= 1000
+REPLAY_MAX_RECORDS ?= 0
+REPLAY_OUTPUT_JSONL ?=
+REPLAY_REPEAT ?= 0
 
 ifeq ($(OS),Windows_NT)
 SHELL := powershell.exe
@@ -50,6 +59,9 @@ run-ml-api:
 run-generator:
 > & $(DEV_SCRIPT) run-generator
 
+run-replay:
+> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPLAY_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) run-replay
+
 run-stream:
 > & $(DEV_SCRIPT) run-stream
 
@@ -58,6 +70,9 @@ start-ml-api:
 
 start-generator:
 > & $(DEV_SCRIPT) start-generator
+
+start-replay:
+> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPLAY_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) start-replay
 
 start-stream:
 > & $(DEV_SCRIPT) start-stream
@@ -95,7 +110,9 @@ help:
 > printf '%s\n' '  install-stream-spark Install optional Spark dependency for stream-processor'
 > printf '%s\n' '  run-ml-api       Run the ML API in the current terminal'
 > printf '%s\n' '  run-generator    Run the generator in the current terminal'
+> printf '%s\n' '  run-replay       Replay access.log or REPLAY_INPUT in the current terminal'
 > printf '%s\n' '  run-stream       Run the stream processor in the current terminal'
+> printf '%s\n' '  start-replay     Replay access.log or REPLAY_INPUT in background'
 > printf '%s\n' '  start-all        Start ML API, generator, and stream processor in background'
 > printf '%s\n' '  stop-local       Stop local background app services started by Makefile'
 > printf '%s\n' '  analytics-seed   Create and seed the ClickHouse table from the host'
@@ -146,6 +163,21 @@ run-generator:
 > PYTHONPATH='$(ROOT)/generator/src' \
 > '$(VENV_PYTHON)' -u -m generator.main
 
+run-replay:
+> REPLAY_ARGS=()
+> if [ -n '$(REPLAY_OUTPUT_JSONL)' ]; then REPLAY_ARGS+=(--output-jsonl '$(REPLAY_OUTPUT_JSONL)'); fi
+> if [ '$(REPLAY_REPEAT)' = '1' ]; then REPLAY_ARGS+=(--repeat); fi
+> NATS_URL='$(NATS_URL_LOCAL)' \
+> NATS_SUBJECT='logs.raw' \
+> GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)' \
+> GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)' \
+> GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)' \
+> GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)' \
+> GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)' \
+> GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)' \
+> PYTHONPATH='$(ROOT)/generator/src' \
+> '$(VENV_PYTHON)' -u -m generator.replay_access_logs --input-dir '$(REPLAY_INPUT)' "$${REPLAY_ARGS[@]}"
+
 run-stream:
 > NATS_URL='$(NATS_URL_LOCAL)' \
 > NATS_SUBJECT='logs.raw' \
@@ -176,6 +208,26 @@ start-generator:
 >   >'$(LOCAL_STATE_DIR)/generator.out.log' 2>'$(LOCAL_STATE_DIR)/generator.err.log' &
 > echo $$! >'$(LOCAL_STATE_DIR)/generator.pid'
 > printf 'Started generator (PID=%s)\n' "$$(cat '$(LOCAL_STATE_DIR)/generator.pid')"
+
+start-replay:
+> mkdir -p '$(LOCAL_STATE_DIR)'
+> REPLAY_ARGS=()
+> if [ -n '$(REPLAY_OUTPUT_JSONL)' ]; then REPLAY_ARGS+=(--output-jsonl '$(REPLAY_OUTPUT_JSONL)'); fi
+> if [ '$(REPLAY_REPEAT)' = '1' ]; then REPLAY_ARGS+=(--repeat); fi
+> nohup env \
+>   NATS_URL='$(NATS_URL_LOCAL)' \
+>   NATS_SUBJECT='logs.raw' \
+>   GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)' \
+>   GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)' \
+>   GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)' \
+>   GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)' \
+>   GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)' \
+>   GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)' \
+>   PYTHONPATH='$(ROOT)/generator/src' \
+>   '$(VENV_PYTHON)' -u -m generator.replay_access_logs --input-dir '$(REPLAY_INPUT)' "$${REPLAY_ARGS[@]}" \
+>   >'$(LOCAL_STATE_DIR)/replay.out.log' 2>'$(LOCAL_STATE_DIR)/replay.err.log' &
+> echo $$! >'$(LOCAL_STATE_DIR)/replay.pid'
+> printf 'Started replay (PID=%s)\n' "$$(cat '$(LOCAL_STATE_DIR)/replay.pid')"
 
 start-stream:
 > mkdir -p '$(LOCAL_STATE_DIR)'
