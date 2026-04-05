@@ -48,6 +48,7 @@ class ReplaySettings:
     time_scale: float = float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "30"))
     session_gap_minutes: int = int(os.getenv("GENERATOR_SESSION_GAP_MINUTES", "15"))
     flush_every: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "1000"))
+    flush_timeout_seconds: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS", "30"))
     progress_every: int = int(os.getenv("GENERATOR_REPLAY_PROGRESS_EVERY", "1000"))
     max_records: int = int(os.getenv("GENERATOR_REPLAY_MAX_RECORDS", "0"))
     output_jsonl: Path | None = None
@@ -493,9 +494,6 @@ def main() -> None:
         flush_every=args.flush_every,
         progress_every=args.progress_every,
         max_records=args.max_records,
-        flush_timeout_seconds=args.flush_timeout_seconds,
-        flush_retry_attempts=args.flush_retry_attempts,
-        flush_retry_backoff_seconds=args.flush_retry_backoff_seconds,
         output_jsonl=args.output_jsonl,
         publish=not args.skip_publish,
         repeat=args.repeat,

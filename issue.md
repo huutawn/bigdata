@@ -60,10 +60,10 @@ GROUP BY hour, ip;
 
 ---
 
-## ISSUE-3: Spark Session được tạo/dừng mỗi batch
+## ISSUE-3: Spark Session được tạo/dừng mỗi batch ✅ ĐÃ GIẢI QUYẾT
 
 **Mức độ:** Nghiêm trọng
-**File liên quan:** `stream-processor/src/stream_processor/main.py` (dòng 332, 484)
+**File liên quan:** `stream-processor/src/stream_processor/main.py`
 
 ### Vấn đề
 Trong `build_bot_feature_windows_spark` và `build_anomaly_feature_windows_spark`, SparkSession được tạo mới và stop sau mỗi lần gọi:
@@ -74,34 +74,22 @@ spark.stop()
 ```
 Việc khởi động Spark JVM mất 5-15 giây mỗi lần — hoàn toàn không acceptable cho streaming.
 
-### Hướng cải thiện
-- Tạo singleton SparkSession dùng chung cho cả pipeline
-- Reuse session giữa các batch
-- Chỉ stop khi shutdown process
-```python
-_spark_session = None
-
-def get_spark_session() -> SparkSession:
-    global _spark_session
-    if _spark_session is None:
-        _spark_session = SparkSession.builder \
-            .master("local[*]") \
-            .appName("aiops-stream-processor") \
-            .config("spark.sql.shuffle.partitions", "4") \
-            .getOrCreate()
-    return _spark_session
-```
+### Giải pháp đã thực hiện
+- Singleton pattern: `get_spark_session()` khởi tạo 1 lần, reuse giữa các batch
+- `shutdown_spark_session()` chỉ gọi khi process shutdown (KeyboardInterrupt)
+- Fallback tự động từ Spark → Python khi Spark không khả dụng (try/except trong `build_bot_feature_windows` và `build_anomaly_feature_windows`)
+- Cấu hình tối ưu: `local[2]`, `spark.sql.shuffle.partitions=4`, `spark.ui.enabled=false`
 
 ### Impact
-- Giảm latency mỗi batch từ 5-15s xuống <1s
+- Giảm latency mỗi batch từ 5-15s xuống <1s (sau lần khởi tạo đầu tiên)
 - Tiết kiệm CPU/RAM do không phải khởi động JVM liên tục
 
 ---
 
-## ISSUE-4: Stream state quản lý trong memory — mất khi crash
+## ISSUE-4: Stream state quản lý trong memory — mất khi crash ✅ ĐÃ GIẢI QUYẾT
 
 **Mức độ:** Trung bình
-**File liên quan:** `stream-processor/src/stream_processor/main.py` (dòng 66-69)
+**File liên quan:** `stream-processor/src/stream_processor/main.py`
 
 ### Vấn đề
 `RuntimeState` lưu `recent_events` và `traffic_buckets` trong RAM. Nếu process crash hoặc restart:
@@ -109,27 +97,15 @@ def get_spark_session() -> SparkSession:
 - Mất lịch sử forecast
 - Dữ liệu trong cửa sổ hiện tại bị tính sai
 
-### Hướng cải thiện
-- **Option 1 (nhẹ):** Periodic checkpoint ra file JSON/local storage
-- **Option 2 (trung bình):** Dùng Redis làm state store
-- **Option 3 (nặng):** Dùng Kafka Streams / Frock state backend
-
-```python
-# Simple file-based checkpoint
-CHECKPOINT_PATH = Path(os.getenv("STREAM_CHECKPOINT_PATH", "/tmp/stream-checkpoint.json"))
-
-def save_checkpoint(state: RuntimeState):
-    CHECKPOINT_PATH.write_text(json.dumps({
-        "recent_events": [...],
-        "traffic_buckets": {...},
-        "last_update": datetime.now(timezone.utc).isoformat(),
-    }))
-
-def load_checkpoint() -> RuntimeState | None:
-    if CHECKPOINT_PATH.exists():
-        data = json.loads(CHECKPOINT_PATH.read_text())
-        # restore state...
-```
+### Giải pháp đã thực hiện
+- **File-based checkpoint** với atomic write (write `.tmp` → rename)
+- `save_checkpoint(state, path)` — serialize `recent_events` + `traffic_buckets` ra JSON
+- `load_checkpoint(path)` — restore state từ file, parse lại datetime
+- Tự động load checkpoint khi `main()` khởi động
+- Periodic checkpoint mỗi `STREAM_CHECKPOINT_INTERVAL` giây (default: 30s)
+- Save checkpoint khi nhận `KeyboardInterrupt` (graceful shutdown)
+- Configurable qua `STREAM_CHECKPOINT_PATH` và `STREAM_CHECKPOINT_INTERVAL` env vars
+- Corrupt checkpoint file → gracefully fallback về fresh state (không crash)
 
 ### Impact
 - Pipeline recover được sau crash
