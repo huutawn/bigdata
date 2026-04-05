@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 from urllib import error
@@ -24,7 +26,17 @@ from stream_processor.main import (  # noqa: E402
     process_once,
     update_runtime_state,
     build_forecast_requests,
+    load_checkpoint,
+    save_checkpoint,
 )
+
+
+def _spark_available_on_windows() -> bool:
+    if os.name != "nt":
+        return True
+    hadoop_home = os.getenv("HADOOP_HOME")
+    winutils = os.getenv("HADOOP_HOME_WINUTILS")
+    return hadoop_home is not None or winutils is not None
 
 
 def make_workspace_dir(prefix: str) -> Path:
@@ -35,11 +47,13 @@ def make_workspace_dir(prefix: str) -> Path:
 
 
 class StreamProcessorTests(unittest.TestCase):
-    def test_stream_settings_default_to_python_windows(self) -> None:
-        self.assertFalse(StreamSettings().use_spark_windows)
+    def test_stream_settings_defaults(self) -> None:
+        settings = StreamSettings()
+        self.assertEqual(settings.bootstrap_servers, "localhost:9092")
+        self.assertEqual(settings.topic, "logs.raw")
 
-    def test_build_bot_feature_windows_aggregates_behavior_features(self) -> None:
-        settings = StreamSettings(use_spark_windows=False)
+    def test_build_bot_feature_windows_python_aggregates_behavior_features(self) -> None:
+        settings = StreamSettings()
         raw_logs = [
             normalize_raw_log(
                 {
@@ -96,8 +110,70 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertGreater(payloads[0]["features"]["http_response_4xx"], 0)
         self.assertGreaterEqual(payloads[0]["features"]["max_barrage"], 1)
 
+    @unittest.skipIf(
+        not _spark_available_on_windows(),
+        "Spark on Windows requires HADOOP_HOME/winutils.exe",
+    )
+    def test_build_bot_feature_windows_spark_aggregates_behavior_features(self) -> None:
+        from stream_processor.main import build_bot_feature_windows_spark  # noqa: F811
+
+        settings = StreamSettings()
+        raw_logs = [
+            normalize_raw_log(
+                {
+                    "schema_version": "v2",
+                    "timestamp": "2026-03-24T10:00:00Z",
+                    "request_id": "req-1",
+                    "session_id": "sess-bot-1",
+                    "ip": "1.2.3.4",
+                    "user_agent": "Googlebot/2.1",
+                    "method": "GET",
+                    "endpoint": "/api/v1/products",
+                    "route_template": "/api/v1/products",
+                    "status": 200,
+                    "latency_ms": 80,
+                }
+            ),
+            normalize_raw_log(
+                {
+                    "schema_version": "v2",
+                    "timestamp": "2026-03-24T10:00:05Z",
+                    "request_id": "req-2",
+                    "session_id": "sess-bot-1",
+                    "ip": "1.2.3.4",
+                    "user_agent": "Googlebot/2.1",
+                    "method": "GET",
+                    "endpoint": "/api/v1/products",
+                    "route_template": "/api/v1/products",
+                    "status": 404,
+                    "latency_ms": 95,
+                }
+            ),
+            normalize_raw_log(
+                {
+                    "schema_version": "v2",
+                    "timestamp": "2026-03-24T10:00:08Z",
+                    "request_id": "req-3",
+                    "session_id": "sess-bot-1",
+                    "ip": "1.2.3.4",
+                    "user_agent": "Googlebot/2.1",
+                    "method": "HEAD",
+                    "endpoint": "/api/v1/products",
+                    "route_template": "/api/v1/products",
+                    "status": 200,
+                    "latency_ms": 70,
+                }
+            ),
+        ]
+
+        payloads = build_bot_feature_windows_spark(raw_logs, settings)
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["features"]["number_of_requests"], 3)
+        self.assertGreater(payloads[0]["features"]["http_response_4xx"], 0)
+
     def test_build_forecast_requests_keeps_recent_history(self) -> None:
-        settings = StreamSettings(use_spark_windows=False, forecast_history_size=4)
+        settings = StreamSettings(forecast_history_size=4)
         state = RuntimeState()
         raw_logs = [
             normalize_raw_log(
@@ -157,13 +233,12 @@ class StreamProcessorTests(unittest.TestCase):
             batch_size=1,
             raw_log_sample_path=sample_path,
             fallback_output_path=fallback_path,
-            use_spark_windows=False,
         )
 
-        async def fake_fetch(_settings: StreamSettings):
+        def fake_fetch(_settings: StreamSettings):
             return []
 
-        with patch("stream_processor.main.fetch_nats_batch", side_effect=fake_fetch), patch(
+        with patch("stream_processor.main.fetch_kafka_batch", side_effect=fake_fetch), patch(
             "stream_processor.main.write_all_tables",
             side_effect=error.URLError("clickhouse unavailable"),
         ), patch("stream_processor.main.ml_api_ready", return_value=False):
@@ -177,7 +252,7 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertIn("predicted_load", processed_row)
         self.assertEqual(processed_row["is_bot"], 1)
 
-    def test_process_once_uses_ml_api_when_available_with_python_default(self) -> None:
+    def test_process_once_uses_ml_api_when_available(self) -> None:
         temp_path = make_workspace_dir("stream-processor")
         self.addCleanup(shutil.rmtree, temp_path, ignore_errors=True)
         sample_path = temp_path / "raw-logs.sample.jsonl"
@@ -199,7 +274,7 @@ class StreamProcessorTests(unittest.TestCase):
             fallback_output_path=fallback_path,
         )
 
-        async def fake_fetch(_settings: StreamSettings):
+        def fake_fetch(_settings: StreamSettings):
             return []
 
         def fake_request_json(
@@ -228,7 +303,7 @@ class StreamProcessorTests(unittest.TestCase):
                 }
             self.fail(f"Unexpected URL: {url}")
 
-        with patch("stream_processor.main.fetch_nats_batch", side_effect=fake_fetch), patch(
+        with patch("stream_processor.main.fetch_kafka_batch", side_effect=fake_fetch), patch(
             "stream_processor.main.write_all_tables",
             side_effect=error.URLError("clickhouse unavailable"),
         ), patch("stream_processor.main.ml_api_ready", return_value=True), patch(
@@ -239,7 +314,6 @@ class StreamProcessorTests(unittest.TestCase):
 
         self.assertEqual(status["source"], "sample")
         self.assertEqual(status["sink"], "file")
-        self.assertFalse(settings.use_spark_windows)
         saved_rows = [json.loads(line) for line in fallback_path.read_text(encoding="utf-8").splitlines()]
         bot_row = next(item["row"] for item in saved_rows if item["table"] == settings.bot_feature_table)
         forecast_rows = [
@@ -252,6 +326,56 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertTrue(all(row["model_version"] == "api-forecast-v2" for row in forecast_rows))
         self.assertEqual(processed_row["predicted_load"], 31)
         self.assertEqual(anomaly_row["model_version"], "api-anomaly-v2")
+
+
+class StreamCheckpointTests(unittest.TestCase):
+    def test_save_and_load_checkpoint_roundtrip(self) -> None:
+        temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temp_dir, ignore_errors=True)
+        checkpoint_path = temp_dir / "checkpoint.json"
+
+        state = RuntimeState()
+        state.recent_events = [
+            normalize_raw_log({
+                "schema_version": "v2",
+                "timestamp": "2026-03-24T10:00:00Z",
+                "request_id": "req-1",
+                "session_id": "sess-1",
+                "ip": "1.2.3.4",
+                "user_agent": "bot",
+                "method": "GET",
+                "endpoint": "/api/v1/products",
+                "route_template": "/api/v1/products",
+                "status": 200,
+                "latency_ms": 100,
+            })
+        ]
+        state.traffic_buckets = {
+            ("system", ""): {datetime(2026, 3, 24, 10, 0, 0, tzinfo=timezone.utc): 42},
+            ("endpoint", "/api/v1/products"): {datetime(2026, 3, 24, 10, 0, 0, tzinfo=timezone.utc): 10},
+        }
+
+        save_checkpoint(state, checkpoint_path)
+        self.assertTrue(checkpoint_path.exists())
+
+        restored = load_checkpoint(checkpoint_path)
+        self.assertIsNotNone(restored)
+        self.assertEqual(len(restored.recent_events), 1)
+        self.assertEqual(len(restored.traffic_buckets), 2)
+        self.assertEqual(restored.traffic_buckets[("system", "")][datetime(2026, 3, 24, 10, 0, 0, tzinfo=timezone.utc)], 42)
+
+    def test_load_checkpoint_returns_none_when_missing(self) -> None:
+        result = load_checkpoint(Path("/nonexistent/path/checkpoint.json"))
+        self.assertIsNone(result)
+
+    def test_load_checkpoint_returns_none_on_corrupt_file(self) -> None:
+        temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, temp_dir, ignore_errors=True)
+        corrupt_path = temp_dir / "corrupt.json"
+        corrupt_path.write_text("not valid json{{{", encoding="utf-8")
+
+        result = load_checkpoint(corrupt_path)
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

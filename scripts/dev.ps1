@@ -14,13 +14,16 @@ $EnvFile = if (Test-Path (Join-Path $Root '.env')) {
     Join-Path $Root '.env.example'
 }
 $ReplayInput = if ($env:GENERATOR_SOURCE_DIR) { $env:GENERATOR_SOURCE_DIR } else { Join-Path $Root 'access.log' }
-$ReplayTimeScale = if ($env:GENERATOR_REPLAY_TIME_SCALE) { $env:GENERATOR_REPLAY_TIME_SCALE } else { '600' }
+$ReplayTimeScale = if ($env:GENERATOR_REPLAY_TIME_SCALE) { $env:GENERATOR_REPLAY_TIME_SCALE } else { '30' }
 $ReplaySessionGapMinutes = if ($env:GENERATOR_SESSION_GAP_MINUTES) { $env:GENERATOR_SESSION_GAP_MINUTES } else { '15' }
-$ReplayFlushEvery = if ($env:GENERATOR_REPLAY_FLUSH_EVERY) { $env:GENERATOR_REPLAY_FLUSH_EVERY } else { '100' }
+$ReplayFlushEvery = if ($env:GENERATOR_REPLAY_FLUSH_EVERY) { $env:GENERATOR_REPLAY_FLUSH_EVERY } else { '1000' }
+$ReplayFlushTimeoutSeconds = if ($env:GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS) { $env:GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS } else { '30' }
+$ReplayFlushRetryAttempts = if ($env:GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS) { $env:GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS } else { '3' }
+$ReplayFlushRetryBackoffSeconds = if ($env:GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS) { $env:GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS } else { '2' }
 $ReplayProgressEvery = if ($env:GENERATOR_REPLAY_PROGRESS_EVERY) { $env:GENERATOR_REPLAY_PROGRESS_EVERY } else { '1000' }
 $ReplayMaxRecords = if ($env:GENERATOR_REPLAY_MAX_RECORDS) { $env:GENERATOR_REPLAY_MAX_RECORDS } else { '0' }
 $ReplayOutputJsonl = $env:GENERATOR_REPLAY_OUTPUT_JSONL
-$ReplayRepeat = if ($env:GENERATOR_REPLAY_REPEAT) { $env:GENERATOR_REPLAY_REPEAT } else { '0' }
+$ReplayRepeat = if ($env:GENERATOR_REPEAT) { $env:GENERATOR_REPEAT } else { '0' }
 
 function Ensure-Venv {
     if (-not (Test-Path $VenvPython)) {
@@ -30,13 +33,13 @@ function Ensure-Venv {
 
 function Get-Python {
     if (-not (Test-Path $VenvPython)) {
-        throw "Virtual environment not found. Run '.\\scripts\\dev.ps1 install-all' first."
+        throw "Virtual environment not found. Run '.\scripts\dev.ps1 install-all' first."
     }
     return $VenvPython
 }
 
 function Invoke-InfraUp {
-    docker-compose -f infra/docker-compose.yml --env-file $EnvFile up -d --remove-orphans nats clickhouse grafana
+    docker-compose -f infra/docker-compose.yml --env-file $EnvFile up -d --remove-orphans kafka clickhouse grafana
 }
 
 function Invoke-InfraDown {
@@ -94,6 +97,12 @@ function Get-ReplayArguments {
         $ReplaySessionGapMinutes,
         '--flush-every',
         $ReplayFlushEvery,
+        '--flush-timeout-seconds',
+        $ReplayFlushTimeoutSeconds,
+        '--flush-retry-attempts',
+        $ReplayFlushRetryAttempts,
+        '--flush-retry-backoff-seconds',
+        $ReplayFlushRetryBackoffSeconds,
         '--progress-every',
         $ReplayProgressEvery,
         '--max-records',
@@ -122,8 +131,8 @@ function Get-ReplayCommand {
     }
 
     return @(
-        "`$env:NATS_URL='nats://127.0.0.1:4222'",
-        "`$env:NATS_SUBJECT='logs.raw'",
+        "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'",
+        "`$env:KAFKA_TOPIC='logs.raw'",
         "`$env:PYTHONPATH='$Root/generator/src'",
         "& '$Python' $($quotedArguments -join ' ')"
     ) -join '; '
@@ -137,7 +146,6 @@ switch ($Task) {
         Write-Host '  create-venv'
         Write-Host '  install-generator'
         Write-Host '  install-stream'
-        Write-Host '  install-stream-spark'
         Write-Host '  install-ml-api'
         Write-Host '  install-all'
         Write-Host '  run-ml-api'
@@ -171,10 +179,6 @@ switch ($Task) {
     'install-stream' {
         Install-Requirements 'stream-processor/requirements.txt'
     }
-    'install-stream-spark' {
-        Install-Requirements 'stream-processor/requirements.txt'
-        Install-Requirements 'stream-processor/requirements-spark.txt'
-    }
     'install-ml-api' {
         Install-Requirements 'ml-api/requirements.txt'
     }
@@ -192,22 +196,22 @@ switch ($Task) {
     }
     'run-generator' {
         $python = Get-Python
-        $env:NATS_URL = 'nats://127.0.0.1:4222'
-        $env:NATS_SUBJECT = 'logs.raw'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_TOPIC = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
         & $python -u -m generator.main
     }
     'run-replay' {
         $python = Get-Python
-        $env:NATS_URL = 'nats://127.0.0.1:4222'
-        $env:NATS_SUBJECT = 'logs.raw'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_TOPIC = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
         & $python @(Get-ReplayArguments)
     }
     'run-stream' {
         $python = Get-Python
-        $env:NATS_URL = 'nats://127.0.0.1:4222'
-        $env:NATS_SUBJECT = 'logs.raw'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_TOPIC = 'logs.raw'
         $env:ML_API_URL = 'http://127.0.0.1:8000'
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
         $env:STREAM_FALLBACK_OUTPUT_PATH = "$Root/stream-processor/output/processed_rows.mock.jsonl"
@@ -220,7 +224,7 @@ switch ($Task) {
     }
     'start-generator' {
         $python = Get-Python
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
     }
     'start-replay' {
         $python = Get-Python
@@ -228,15 +232,15 @@ switch ($Task) {
     }
     'start-stream' {
         $python = Get-Python
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
+        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'start-all' {
         Invoke-InfraUp
         $python = Get-Python
         Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
         Start-Sleep -Seconds 2
-        Start-BackgroundService 'generator' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
-        Start-BackgroundService 'stream-processor' "`$env:NATS_URL='nats://127.0.0.1:4222'; `$env:NATS_SUBJECT='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
+        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'stop-local' {
         Stop-BackgroundServices

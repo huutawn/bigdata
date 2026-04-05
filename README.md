@@ -8,7 +8,7 @@ Kho lưu trữ này là một bản mẫu thử nghiệm AIOps ưu tiên chạy 
 
 Kiến trúc v2 là:
 
-`generator -> NATS -> stream-processor -> ml-api -> ClickHouse -> Grafana`
+`generator -> Kafka -> stream-processor (Spark) -> ml-api -> ClickHouse -> Grafana`
 
 Dự án hiện đang sử dụng:
 
@@ -61,7 +61,7 @@ Các quy tắc quan trọng:
 ## Quy trình làm việc ưu tiên cục bộ (Local-first workflow)
 
 Docker Compose chỉ chạy cơ sở hạ tầng dùng chung:
-- NATS
+- Kafka (KRaft mode, no ZooKeeper)
 - ClickHouse
 - Grafana
 
@@ -81,9 +81,8 @@ Tất cả các lệnh ứng dụng cục bộ hiện đều sử dụng môi tr
 .\scripts\dev.ps1 start-all
 ```
 
-Windows local development now defaults to Python windowing for `stream-processor`.
-`install-all` no longer installs `pyspark`; opt into Spark only when needed.
-See [docs/python-first-streaming.md](docs/python-first-streaming.md) for the Windows workflow.
+Windows local development uses Spark for windowing by default.
+See [docs/python-first-streaming.md](docs/python-first-streaming.md) for the architecture overview.
 
 Dừng các dịch vụ cục bộ bằng:
 
@@ -109,14 +108,6 @@ make create-venv
 make install-all
 make infra-up
 make start-all
-```
-
-Optional Spark on Windows:
-
-```powershell
-make install-stream-spark
-$env:STREAM_USE_SPARK_WINDOWS='1'
-make run-stream
 ```
 
 ### Nếu thiếu `make`
@@ -184,6 +175,11 @@ make --version
 - Kích thước lịch sử dự báo: 10 nhóm
 
 Những giá trị này có thể thay đổi trong `.env.example`.
+
+## Xử lý cửa sổ (Windowing engine)
+
+Stream processor sử dụng **Spark** làm engine mặc định cho việc xây dựng cửa sổ đặc trưng.
+Spark session được khởi tạo một lần (singleton) và tái sử dụng giữa các batch để giảm overhead.
 
 ## Các bảng phân tích (Analytics tables)
 

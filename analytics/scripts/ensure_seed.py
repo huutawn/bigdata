@@ -12,6 +12,9 @@ CREATE_SQL = (ROOT / "analytics" / "sql" / "create_processed_logs.sql").read_tex
 SEED_SQL = (ROOT / "analytics" / "sql" / "seed_processed_logs.sql").read_text(
     encoding="utf-8"
 )
+MV_SQL = (ROOT / "analytics" / "sql" / "create_materialized_views.sql").read_text(
+    encoding="utf-8"
+)
 CLICKHOUSE_URL = os.getenv("CLICKHOUSE_URL", "http://localhost:8123")
 
 
@@ -31,6 +34,11 @@ def execute(sql: str) -> str:
 def main() -> int:
     for statement in split_statements(CREATE_SQL):
         execute(statement)
+    for statement in split_statements(MV_SQL):
+        try:
+            execute(statement)
+        except Exception as exc:
+            print(f"Warning: failed to execute MV statement: {exc}")
     count = int(execute("SELECT count() FROM processed_logs") or "0")
     if count == 0:
         for statement in split_statements(SEED_SQL):

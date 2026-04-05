@@ -32,8 +32,19 @@ jobs:
       - name: Validate docker compose
         run: docker compose -f infra/docker-compose.yml --env-file .env.example config
 
-      - name: Start ClickHouse smoke dependency
-        run: docker compose -f infra/docker-compose.yml --env-file .env.example up -d clickhouse
+      - name: Start Kafka and ClickHouse
+        run: docker compose -f infra/docker-compose.yml --env-file .env.example up -d kafka clickhouse
+
+      - name: Wait for Kafka
+        run: |
+          for i in {1..30}; do
+            if docker compose -f infra/docker-compose.yml --env-file .env.example exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Kafka did not become ready in time"
+          exit 1
 
       - name: Wait for ClickHouse
         run: |
@@ -52,6 +63,6 @@ jobs:
       - name: Run analytics query smoke test
         run: python analytics/scripts/query_smoke.py
 
-      - name: Stop ClickHouse
+      - name: Stop services
         if: always()
         run: docker compose -f infra/docker-compose.yml --env-file .env.example down -v

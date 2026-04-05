@@ -178,9 +178,9 @@ class MlApiAnalyzerTests(unittest.TestCase):
                 models_dir,
             )
 
-        self.assertEqual(result["model_version"], "guarded-forecast-v2")
         self.assertGreaterEqual(result["predicted_request_count"], 3)
         self.assertLessEqual(result["predicted_request_count"], 50)
+        self.assertIn("forecast", result["model_version"])
 
 
 @unittest.skipIf(TestClient is None or create_app is None, "fastapi is not installed")

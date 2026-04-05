@@ -4,18 +4,22 @@ ROOT := $(CURDIR)
 LOCAL_STATE_DIR := $(ROOT)/.local-dev
 VENV_DIR := $(ROOT)/.venv
 ENV_FILE := $(if $(wildcard $(ROOT)/.env),$(ROOT)/.env,$(ROOT)/.env.example)
-NATS_URL_LOCAL := nats://127.0.0.1:4222
+KAFKA_BOOTSTRAP_SERVERS_LOCAL := localhost:9092
+KAFKA_TOPIC_LOCAL := logs.raw
 ML_API_URL_LOCAL := http://127.0.0.1:8000
 CLICKHOUSE_URL_LOCAL := http://127.0.0.1:8123
 
-.PHONY: help infra-up infra-down create-venv install-generator install-stream install-stream-spark install-ml-api install-all \
+.PHONY: help infra-up infra-down create-venv install-generator install-stream install-ml-api install-all \
         run-generator run-replay run-stream run-ml-api start-generator start-replay start-stream start-ml-api \
         start-all stop-local analytics-seed analytics-query validate test
 
 REPLAY_INPUT ?= $(ROOT)/access.log
-REPLAY_TIME_SCALE ?= 600
+REPLAY_TIME_SCALE ?= 30
 REPLAY_SESSION_GAP_MINUTES ?= 15
-REPLAY_FLUSH_EVERY ?= 100
+REPLAY_FLUSH_EVERY ?= 1000
+REPLAY_FLUSH_TIMEOUT_SECONDS ?= 30
+REPLAY_FLUSH_RETRY_ATTEMPTS ?= 3
+REPLAY_FLUSH_RETRY_BACKOFF_SECONDS ?= 2
 REPLAY_PROGRESS_EVERY ?= 1000
 REPLAY_MAX_RECORDS ?= 0
 REPLAY_OUTPUT_JSONL ?=
@@ -44,9 +48,6 @@ install-generator:
 install-stream:
 > & $(DEV_SCRIPT) install-stream
 
-install-stream-spark:
-> & $(DEV_SCRIPT) install-stream-spark
-
 install-ml-api:
 > & $(DEV_SCRIPT) install-ml-api
 
@@ -60,7 +61,7 @@ run-generator:
 > & $(DEV_SCRIPT) run-generator
 
 run-replay:
-> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPLAY_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) run-replay
+> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS='$(REPLAY_FLUSH_TIMEOUT_SECONDS)'; $$env:GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS='$(REPLAY_FLUSH_RETRY_ATTEMPTS)'; $$env:GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS='$(REPLAY_FLUSH_RETRY_BACKOFF_SECONDS)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) run-replay
 
 run-stream:
 > & $(DEV_SCRIPT) run-stream
@@ -72,7 +73,7 @@ start-generator:
 > & $(DEV_SCRIPT) start-generator
 
 start-replay:
-> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPLAY_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) start-replay
+> $$env:GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)'; $$env:GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)'; $$env:GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)'; $$env:GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)'; $$env:GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS='$(REPLAY_FLUSH_TIMEOUT_SECONDS)'; $$env:GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS='$(REPLAY_FLUSH_RETRY_ATTEMPTS)'; $$env:GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS='$(REPLAY_FLUSH_RETRY_BACKOFF_SECONDS)'; $$env:GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)'; $$env:GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)'; $$env:GENERATOR_REPLAY_OUTPUT_JSONL='$(REPLAY_OUTPUT_JSONL)'; $$env:GENERATOR_REPEAT='$(REPLAY_REPEAT)'; & $(DEV_SCRIPT) start-replay
 
 start-stream:
 > & $(DEV_SCRIPT) start-stream
@@ -103,11 +104,10 @@ VENV_PYTHON := $(VENV_DIR)/bin/python
 
 help:
 > printf '%s\n' 'Targets:'
-> printf '%s\n' '  infra-up         Start NATS, ClickHouse, and Grafana in Docker'
+> printf '%s\n' '  infra-up         Start Kafka, ClickHouse, and Grafana in Docker'
 > printf '%s\n' '  infra-down       Stop infra containers and remove volumes'
 > printf '%s\n' '  create-venv      Create the local project virtual environment'
 > printf '%s\n' '  install-all      Install base Python dependencies for all local app services'
-> printf '%s\n' '  install-stream-spark Install optional Spark dependency for stream-processor'
 > printf '%s\n' '  run-ml-api       Run the ML API in the current terminal'
 > printf '%s\n' '  run-generator    Run the generator in the current terminal'
 > printf '%s\n' '  run-replay       Replay access.log or REPLAY_INPUT in the current terminal'
@@ -121,7 +121,7 @@ help:
 > printf '%s\n' '  test             Run bootstrap unit tests'
 
 infra-up:
-> docker-compose -f infra/docker-compose.yml --env-file '$(ENV_FILE)' up -d --remove-orphans nats clickhouse grafana
+> docker-compose -f infra/docker-compose.yml --env-file '$(ENV_FILE)' up -d --remove-orphans kafka clickhouse grafana
 
 infra-down:
 > docker-compose -f infra/docker-compose.yml --env-file '$(ENV_FILE)' down -v
@@ -137,10 +137,6 @@ install-generator:
 install-stream:
 > $(MAKE) create-venv
 > '$(VENV_PYTHON)' -m pip install -r stream-processor/requirements.txt
-
-install-stream-spark:
-> $(MAKE) install-stream
-> '$(VENV_PYTHON)' -m pip install -r stream-processor/requirements-spark.txt
 
 install-ml-api:
 > $(MAKE) create-venv
@@ -158,8 +154,8 @@ run-ml-api:
 > '$(VENV_PYTHON)' -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000
 
 run-generator:
-> NATS_URL='$(NATS_URL_LOCAL)' \
-> NATS_SUBJECT='logs.raw' \
+> KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+> KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 > PYTHONPATH='$(ROOT)/generator/src' \
 > '$(VENV_PYTHON)' -u -m generator.main
 
@@ -167,20 +163,23 @@ run-replay:
 > REPLAY_ARGS=()
 > if [ -n '$(REPLAY_OUTPUT_JSONL)' ]; then REPLAY_ARGS+=(--output-jsonl '$(REPLAY_OUTPUT_JSONL)'); fi
 > if [ '$(REPLAY_REPEAT)' = '1' ]; then REPLAY_ARGS+=(--repeat); fi
-> NATS_URL='$(NATS_URL_LOCAL)' \
-> NATS_SUBJECT='logs.raw' \
+> KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+> KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 > GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)' \
 > GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)' \
 > GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)' \
 > GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)' \
+> GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS='$(REPLAY_FLUSH_TIMEOUT_SECONDS)' \
+> GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS='$(REPLAY_FLUSH_RETRY_ATTEMPTS)' \
+> GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS='$(REPLAY_FLUSH_RETRY_BACKOFF_SECONDS)' \
 > GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)' \
 > GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)' \
 > PYTHONPATH='$(ROOT)/generator/src' \
 > '$(VENV_PYTHON)' -u -m generator.replay_access_logs --input-dir '$(REPLAY_INPUT)' "$${REPLAY_ARGS[@]}"
 
 run-stream:
-> NATS_URL='$(NATS_URL_LOCAL)' \
-> NATS_SUBJECT='logs.raw' \
+> KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+> KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 > ML_API_URL='$(ML_API_URL_LOCAL)' \
 > CLICKHOUSE_URL='$(CLICKHOUSE_URL_LOCAL)' \
 > STREAM_FALLBACK_OUTPUT_PATH='$(ROOT)/stream-processor/output/processed_rows.mock.jsonl' \
@@ -201,8 +200,8 @@ start-ml-api:
 start-generator:
 > mkdir -p '$(LOCAL_STATE_DIR)'
 > nohup env \
->   NATS_URL='$(NATS_URL_LOCAL)' \
->   NATS_SUBJECT='logs.raw' \
+>   KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+>   KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 >   PYTHONPATH='$(ROOT)/generator/src' \
 >   '$(VENV_PYTHON)' -u -m generator.main \
 >   >'$(LOCAL_STATE_DIR)/generator.out.log' 2>'$(LOCAL_STATE_DIR)/generator.err.log' &
@@ -215,12 +214,15 @@ start-replay:
 > if [ -n '$(REPLAY_OUTPUT_JSONL)' ]; then REPLAY_ARGS+=(--output-jsonl '$(REPLAY_OUTPUT_JSONL)'); fi
 > if [ '$(REPLAY_REPEAT)' = '1' ]; then REPLAY_ARGS+=(--repeat); fi
 > nohup env \
->   NATS_URL='$(NATS_URL_LOCAL)' \
->   NATS_SUBJECT='logs.raw' \
+>   KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+>   KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 >   GENERATOR_SOURCE_DIR='$(REPLAY_INPUT)' \
 >   GENERATOR_REPLAY_TIME_SCALE='$(REPLAY_TIME_SCALE)' \
 >   GENERATOR_SESSION_GAP_MINUTES='$(REPLAY_SESSION_GAP_MINUTES)' \
 >   GENERATOR_REPLAY_FLUSH_EVERY='$(REPLAY_FLUSH_EVERY)' \
+>   GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS='$(REPLAY_FLUSH_TIMEOUT_SECONDS)' \
+>   GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS='$(REPLAY_FLUSH_RETRY_ATTEMPTS)' \
+>   GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS='$(REPLAY_FLUSH_RETRY_BACKOFF_SECONDS)' \
 >   GENERATOR_REPLAY_PROGRESS_EVERY='$(REPLAY_PROGRESS_EVERY)' \
 >   GENERATOR_REPLAY_MAX_RECORDS='$(REPLAY_MAX_RECORDS)' \
 >   PYTHONPATH='$(ROOT)/generator/src' \
@@ -232,8 +234,8 @@ start-replay:
 start-stream:
 > mkdir -p '$(LOCAL_STATE_DIR)'
 > nohup env \
->   NATS_URL='$(NATS_URL_LOCAL)' \
->   NATS_SUBJECT='logs.raw' \
+>   KAFKA_BOOTSTRAP_SERVERS='$(KAFKA_BOOTSTRAP_SERVERS_LOCAL)' \
+>   KAFKA_TOPIC='$(KAFKA_TOPIC_LOCAL)' \
 >   ML_API_URL='$(ML_API_URL_LOCAL)' \
 >   CLICKHOUSE_URL='$(CLICKHOUSE_URL_LOCAL)' \
 >   STREAM_FALLBACK_OUTPUT_PATH='$(ROOT)/stream-processor/output/processed_rows.mock.jsonl' \

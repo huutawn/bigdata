@@ -16,6 +16,8 @@ Ba nhiệm vụ ML được tách biệt:
 2. Dự báo tải dựa trên các nhóm lịch sử lưu lượng.
 3. Phát hiện bất thường về độ trễ và lỗi trên các cửa sổ endpoint.
 
+Luồng dữ liệu: `generator -> Kafka -> stream-processor (Spark) -> ml-api -> ClickHouse -> Grafana`
+
 ## 1. Hợp đồng Log thô (Raw Log Contract)
 
 - Chủ đề (Subject): `logs.raw`

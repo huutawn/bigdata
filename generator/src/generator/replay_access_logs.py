@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import gzip
 import hashlib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote, urlsplit
 
-from generator.main import _isoformat, connect_nats
-
+from generator.main import _isoformat
+from kafka import KafkaProducer
+from kafka.errors import NoBrokersAvailable
 
 ALLOWED_METHODS = {"GET", "POST", "HEAD", "PUT", "DELETE", "PATCH"}
 LOG_PATTERN = re.compile(
@@ -42,17 +43,16 @@ BOT_SIGNATURES = (
 @dataclass(frozen=True)
 class ReplaySettings:
     input_dir: Path
-    nats_url: str = os.getenv("NATS_URL", "nats://localhost:4222")
-    subject: str = os.getenv("NATS_SUBJECT", "logs.raw")
-    time_scale: float = float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "600"))
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
+    time_scale: float = float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "30"))
     session_gap_minutes: int = int(os.getenv("GENERATOR_SESSION_GAP_MINUTES", "15"))
-    flush_every: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "100"))
+    flush_every: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "1000"))
     progress_every: int = int(os.getenv("GENERATOR_REPLAY_PROGRESS_EVERY", "1000"))
     max_records: int = int(os.getenv("GENERATOR_REPLAY_MAX_RECORDS", "0"))
     output_jsonl: Path | None = None
     publish: bool = True
     repeat: bool = False
-    nats_connect_timeout_seconds: int = int(os.getenv("GENERATOR_NATS_TIMEOUT_SECONDS", "2"))
 
 
 @dataclass
@@ -246,19 +246,64 @@ def iter_normalized_records(
             yield parsed
 
 
-async def replay_access_logs(settings: ReplaySettings) -> None:
+def connect_kafka(bootstrap_servers: str) -> KafkaProducer:
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=bootstrap_servers.split(","),
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+            acks="all",
+            retries=3,
+        )
+        return producer
+    except NoBrokersAvailable as exc:
+        raise RuntimeError(
+            f"Kafka is not available at {bootstrap_servers}. Replay fail-fast."
+        ) from exc
+
+
+def flush_kafka_with_backoff(
+    producer: KafkaProducer,
+    settings: ReplaySettings,
+    stage: str,
+) -> None:
+    attempts = max(3, 1)
+    backoff_seconds = 2.0
+
+    for attempt in range(1, attempts + 1):
+        try:
+            producer.flush(timeout=settings.flush_timeout_seconds)
+            return
+        except Exception as exc:
+            if attempt >= attempts:
+                raise RuntimeError(
+                    "Kafka flush timed out while replaying access logs. "
+                    "Reduce replay speed with a lower --time-scale, increase "
+                    "--flush-every, or speed up the stream processor."
+                ) from exc
+
+            print(
+                "Replay flush timed out "
+                f"(stage={stage}, attempt={attempt}/{attempts}). "
+                f"Backing off for {backoff_seconds:.1f}s before retry."
+            )
+            time.sleep(backoff_seconds)
+
+
+def replay_access_logs(settings: ReplaySettings) -> None:
     log_paths = discover_log_files(settings.input_dir)
     output_handle: TextIO | None = None
-    nc = None
+    producer: KafkaProducer | None = None
     cycle = 0
     total_published = 0
     total_written = 0
     stats = ReplayStats()
 
     if not settings.publish and settings.output_jsonl is None:
-        raise ValueError("Choose at least one output: publish to NATS or write --output-jsonl.")
+        raise ValueError("Choose at least one output: publish to Kafka or write --output-jsonl.")
     if settings.time_scale <= 0:
         raise ValueError("--time-scale must be greater than zero.")
+    if settings.flush_every <= 0:
+        raise ValueError("--flush-every must be greater than zero.")
     if settings.progress_every <= 0:
         raise ValueError("--progress-every must be greater than zero.")
 
@@ -268,7 +313,7 @@ async def replay_access_logs(settings: ReplaySettings) -> None:
             output_handle = settings.output_jsonl.open("w", encoding="utf-8")
 
         if settings.publish:
-            nc = await connect_nats(settings.nats_url, settings.nats_connect_timeout_seconds)
+            producer = connect_kafka(settings.bootstrap_servers)
 
         print(
             "Starting access-log replay from "
@@ -293,7 +338,7 @@ async def replay_access_logs(settings: ReplaySettings) -> None:
                 scheduled_timestamp = cycle_anchor + timedelta(seconds=max(delta_seconds, 0.0))
                 sleep_seconds = (scheduled_timestamp - datetime.now(timezone.utc)).total_seconds()
                 if sleep_seconds > 0:
-                    await asyncio.sleep(sleep_seconds)
+                    time.sleep(sleep_seconds)
 
                 record["timestamp"] = _isoformat(scheduled_timestamp)
                 payload = json.dumps(record, ensure_ascii=False)
@@ -302,16 +347,24 @@ async def replay_access_logs(settings: ReplaySettings) -> None:
                     output_handle.write(payload + "\n")
                     total_written += 1
 
-                if nc is not None:
-                    await nc.publish(settings.subject, payload.encode("utf-8"))
+                if producer is not None:
+                    producer.send(settings.topic, value=record)
                     total_published += 1
                     if total_published % settings.flush_every == 0:
-                        await nc.flush()
+                        flush_kafka_with_backoff(
+                            producer,
+                            settings,
+                            stage=f"periodic-{total_published}",
+                        )
 
                 cycle_count += 1
                 if cycle_count % settings.progress_every == 0:
-                    if nc is not None:
-                        await nc.flush()
+                    if producer is not None:
+                        flush_kafka_with_backoff(
+                            producer,
+                            settings,
+                            stage=f"progress-{cycle + 1}-{cycle_count}",
+                        )
                     if output_handle is not None:
                         output_handle.flush()
                     print(
@@ -323,8 +376,12 @@ async def replay_access_logs(settings: ReplaySettings) -> None:
                 if settings.max_records and max(total_published, total_written) >= settings.max_records:
                     break
 
-            if nc is not None:
-                await nc.flush()
+            if producer is not None:
+                flush_kafka_with_backoff(
+                    producer,
+                    settings,
+                    stage=f"cycle-end-{cycle + 1}",
+                )
             if output_handle is not None:
                 output_handle.flush()
 
@@ -345,8 +402,8 @@ async def replay_access_logs(settings: ReplaySettings) -> None:
     finally:
         if output_handle is not None:
             output_handle.close()
-        if nc is not None:
-            await nc.close()
+        if producer is not None:
+            producer.close()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -361,7 +418,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--time-scale",
         type=float,
-        default=float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "600")),
+        default=float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "30")),
         help="Compress original time gaps by this factor. Larger means faster replay.",
     )
     parser.add_argument(
@@ -373,8 +430,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--flush-every",
         type=int,
-        default=int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "100")),
-        help="Flush to NATS after this many published records.",
+        default=int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "1000")),
+        help="Flush to Kafka after this many published records.",
+    )
+    parser.add_argument(
+        "--flush-timeout-seconds",
+        type=int,
+        default=int(os.getenv("GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS", "30")),
+        help="Timeout for each Kafka flush attempt.",
+    )
+    parser.add_argument(
+        "--flush-retry-attempts",
+        type=int,
+        default=int(os.getenv("GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS", "3")),
+        help="Retry count when a Kafka flush times out.",
+    )
+    parser.add_argument(
+        "--flush-retry-backoff-seconds",
+        type=float,
+        default=float(os.getenv("GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS", "2")),
+        help="Sleep this many seconds before retrying a timed out Kafka flush.",
     )
     parser.add_argument(
         "--progress-every",
@@ -396,7 +471,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-publish",
         action="store_true",
-        help="Only write JSONL output instead of publishing to NATS.",
+        help="Only write JSONL output instead of publishing to Kafka.",
     )
     parser.add_argument(
         "--repeat",
@@ -418,11 +493,14 @@ def main() -> None:
         flush_every=args.flush_every,
         progress_every=args.progress_every,
         max_records=args.max_records,
+        flush_timeout_seconds=args.flush_timeout_seconds,
+        flush_retry_attempts=args.flush_retry_attempts,
+        flush_retry_backoff_seconds=args.flush_retry_backoff_seconds,
         output_jsonl=args.output_jsonl,
         publish=not args.skip_publish,
         repeat=args.repeat,
     )
-    asyncio.run(replay_access_logs(settings))
+    replay_access_logs(settings)
 
 
 if __name__ == "__main__":

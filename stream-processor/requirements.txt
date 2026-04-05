@@ -1,1 +1,2 @@
-nats-py==2.10.0
+kafka-python-ng==2.2.3
+pyspark==3.5.5

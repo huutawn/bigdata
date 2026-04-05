@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from kafka import KafkaProducer
+from kafka.errors import NoBrokersAvailable
 
 ENDPOINTS = [
     "/api/v1/search",
@@ -56,52 +58,23 @@ METHODS_BY_ROUTE = {
     "/api/v1/admin/users": ["GET", "PATCH", "DELETE"],
 }
 LOAD_PROFILE = [
-    3,
-    4,
-    5,
-    6,
-    8,
-    10,
-    12,
-    14,
-    16,
-    18,
-    20,
-    22,
-    20,
-    18,
-    16,
-    13,
-    10,
-    8,
-    6,
-    5,
-    4,
-    3,
-    2,
-    2,
-    3,
-    5,
-    8,
-    12,
-    17,
-    11,
-    7,
-    4,
+    3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22,
+    20, 18, 16, 13, 10, 8, 6, 5, 4, 3, 2, 2,
+    3, 5, 8, 12, 17, 11, 7, 4,
 ]
 LOAD_PROFILE_JITTER = [0, 1, 0, -1, 0, 1, -1, 0]
 
 
 @dataclass(frozen=True)
 class GeneratorSettings:
-    nats_url: str = os.getenv("NATS_URL", "nats://localhost:4222")
-    subject: str = os.getenv("NATS_SUBJECT", "logs.raw")
-    batch_size: int = int(os.getenv("GENERATOR_BATCH_SIZE", "5"))
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
+    batch_size: int = int(os.getenv("GENERATOR_BATCH_SIZE", "50"))
     publish_interval_seconds: int = int(
         os.getenv("GENERATOR_PUBLISH_INTERVAL_SECONDS", "3")
     )
     seed: int = int(os.getenv("GENERATOR_SEED", "7"))
-    nats_connect_timeout_seconds: int = int(os.getenv("GENERATOR_NATS_TIMEOUT_SECONDS", "2"))
+    connect_timeout_seconds: int = int(os.getenv("GENERATOR_KAFKA_TIMEOUT_SECONDS", "10"))
 
 
 def _isoformat(timestamp: datetime) -> str:
@@ -208,7 +181,7 @@ def build_log(
 
 def _resolve_batch_size(settings: GeneratorSettings, publish_index: int) -> int:
     base = max(settings.batch_size, 1)
-    scale = base / 5.0
+    scale = base / 50.0
     profile_value = LOAD_PROFILE[publish_index % len(LOAD_PROFILE)]
     jitter = LOAD_PROFILE_JITTER[publish_index % len(LOAD_PROFILE_JITTER)]
     return max(1, int(round(profile_value * scale)) + jitter)
@@ -240,25 +213,25 @@ def _build_batch(
     return logs
 
 
-async def connect_nats(nats_url: str, timeout_seconds: int):
+def connect_kafka(bootstrap_servers: str, timeout_seconds: int) -> KafkaProducer:
     try:
-        import nats
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("Missing dependency nats-py. Install generator requirements.") from exc
-
-    try:
-        return await nats.connect(
-            nats_url,
-            allow_reconnect=False,
-            connect_timeout=timeout_seconds,
-            max_reconnect_attempts=0,
+        producer = KafkaProducer(
+            bootstrap_servers=bootstrap_servers.split(","),
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+            acks="all",
+            retries=3,
+            request_timeout_ms=timeout_seconds * 1000,
+            max_block_ms=timeout_seconds * 1000,
         )
-    except Exception as exc:
-        raise RuntimeError(f"NATS is not available at {nats_url}. Generator fail-fast.") from exc
+        return producer
+    except NoBrokersAvailable as exc:
+        raise RuntimeError(
+            f"Kafka is not available at {bootstrap_servers}. Generator fail-fast."
+        ) from exc
 
 
-async def publish_loop(settings: GeneratorSettings) -> None:
-    nc = await connect_nats(settings.nats_url, settings.nats_connect_timeout_seconds)
+def publish_loop(settings: GeneratorSettings) -> None:
+    producer = connect_kafka(settings.bootstrap_servers, settings.connect_timeout_seconds)
     rng = random.Random(settings.seed)
     cursor = 0
     publish_index = 0
@@ -268,19 +241,21 @@ async def publish_loop(settings: GeneratorSettings) -> None:
             batch_size = _resolve_batch_size(settings, publish_index)
             logs = _build_batch(publish_index, cursor, batch_size, rng, datetime.now(timezone.utc))
             for log in logs:
-                await nc.publish(settings.subject, json.dumps(log).encode("utf-8"))
-            await nc.flush()
-            print(f"Published {len(logs)} v2 raw logs to {settings.subject}")
+                producer.send(settings.topic, value=log)
+            producer.flush()
+            print(f"Published {len(logs)} v2 raw logs to topic '{settings.topic}'")
             cursor += batch_size
             publish_index += 1
-            await asyncio.sleep(settings.publish_interval_seconds)
+            time.sleep(settings.publish_interval_seconds)
+    except KeyboardInterrupt:
+        print("Generator interrupted.")
     finally:
-        await nc.close()
+        producer.close()
 
 
 def main() -> None:
     settings = GeneratorSettings()
-    asyncio.run(publish_loop(settings))
+    publish_loop(settings)
 
 
 if __name__ == "__main__":

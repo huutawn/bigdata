@@ -33,7 +33,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("latency_ms", first)
 
     def test_batch_size_profile_has_repeatable_trend(self) -> None:
-        settings = GeneratorSettings(batch_size=5)
+        settings = GeneratorSettings(batch_size=50)
         series = [_resolve_batch_size(settings, index) for index in range(16)]
 
         self.assertEqual(series[0], _resolve_batch_size(settings, 0))

@@ -1,21 +1,32 @@
 services:
-  nats:
-    image: nats:2.10.22-alpine
-    command:
-      - "-js"
-      - "-m"
-      - "8222"
+  kafka:
+    image: apache/kafka:3.9.0
     ports:
-      - "${NATS_CLIENT_PORT:-4222}:4222"
-      - "${NATS_HTTP_PORT:-8222}:8222"
+      - "${KAFKA_CLIENT_PORT:-9092}:9092"
+      - "${KAFKA_CONTROLLER_PORT:-9093}:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_CLIENT_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xmx${KAFKA_HEAP_MB:-512}m -Xms${KAFKA_HEAP_MB:-512}m"
     healthcheck:
       test:
         - CMD-SHELL
-        - wget -qO- http://localhost:8222/healthz > /dev/null || exit 1
+        - kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1 || exit 1
       interval: 10s
       timeout: 5s
-      retries: 5
-    mem_limit: "${NATS_MEMORY_LIMIT:-128m}"
+      retries: 10
+    mem_limit: "${KAFKA_MEMORY_LIMIT:-1g}"
     networks:
       - aiops
 
@@ -29,6 +40,7 @@ services:
       CLICKHOUSE_USER: default
     volumes:
       - ../analytics/sql/create_processed_logs.sql:/docker-entrypoint-initdb.d/001-create_processed_logs.sql:ro
+      - ../analytics/sql/create_materialized_views.sql:/docker-entrypoint-initdb.d/002-create_materialized_views.sql:ro
       - ../infra/clickhouse/users.d/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
     healthcheck:
       test:

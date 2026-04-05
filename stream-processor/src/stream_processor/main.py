@@ -1,10 +1,9 @@
-
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import os
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -19,12 +18,37 @@ from stream_processor.mock_analyzer import predict_bot as predict_bot_mock
 from stream_processor.mock_analyzer import predict_forecast as predict_forecast_mock
 
 
+_spark_session = None
+
+
+def get_spark_session():
+    global _spark_session
+    if _spark_session is None:
+        from pyspark.sql import SparkSession
+        _spark_session = SparkSession.builder \
+            .master("local[2]") \
+            .appName("aiops-stream-processor") \
+            .config("spark.sql.shuffle.partitions", "4") \
+            .config("spark.driver.memory", "1g") \
+            .config("spark.ui.enabled", "false") \
+            .config("spark.log.level", "ERROR") \
+            .getOrCreate()
+    return _spark_session
+
+
+def shutdown_spark_session():
+    global _spark_session
+    if _spark_session is not None:
+        _spark_session.stop()
+        _spark_session = None
+
+
 @dataclass(frozen=True)
 class StreamSettings:
-    nats_url: str = os.getenv("NATS_URL", "nats://localhost:4222")
-    subject: str = os.getenv("NATS_SUBJECT", "logs.raw")
-    batch_size: int = int(os.getenv("STREAM_BATCH_SIZE", "5"))
-    poll_timeout_seconds: int = int(os.getenv("STREAM_POLL_TIMEOUT_SECONDS", "3"))
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
+    batch_size: int = int(os.getenv("STREAM_BATCH_SIZE", "50"))
+    poll_timeout_seconds: int = int(os.getenv("STREAM_POLL_TIMEOUT_SECONDS", "5"))
     poll_interval_seconds: int = int(os.getenv("STREAM_POLL_INTERVAL_SECONDS", "10"))
     ml_api_url: str = os.getenv("ML_API_URL", "http://localhost:8000")
     clickhouse_url: str = os.getenv("CLICKHOUSE_URL", "http://localhost:8123")
@@ -59,13 +83,82 @@ class StreamSettings:
     )
     forecast_bucket_seconds: int = int(os.getenv("FORECAST_BUCKET_SECONDS", "60"))
     forecast_history_size: int = int(os.getenv("FORECAST_HISTORY_SIZE", "10"))
-    use_spark_windows: bool = os.getenv("STREAM_USE_SPARK_WINDOWS", "0") == "1"
+    checkpoint_path: Path = Path(
+        os.getenv(
+            "STREAM_CHECKPOINT_PATH",
+            str(Path(__file__).resolve().parents[2] / "output" / "stream-checkpoint.json"),
+        )
+    )
+    checkpoint_interval: int = int(os.getenv("STREAM_CHECKPOINT_INTERVAL", "30"))
 
 
 @dataclass
 class RuntimeState:
     recent_events: list[dict[str, Any]] = field(default_factory=list)
     traffic_buckets: dict[tuple[str, str], dict[datetime, int]] = field(default_factory=dict)
+
+
+def _serialize_traffic_buckets(
+    buckets: dict[tuple[str, str], dict[datetime, int]],
+) -> dict[str, dict[str, int]]:
+    serialized: dict[str, dict[str, int]] = {}
+    for (scope, endpoint), bucket_map in buckets.items():
+        key = f"{scope}||{endpoint}"
+        serialized[key] = {
+            format_timestamp(bucket_end): count
+            for bucket_end, count in bucket_map.items()
+        }
+    return serialized
+
+
+def _deserialize_traffic_buckets(
+    data: dict[str, dict[str, int]],
+) -> dict[tuple[str, str], dict[datetime, int]]:
+    buckets: dict[tuple[str, str], dict[datetime, int]] = {}
+    for key, bucket_map in data.items():
+        scope, endpoint = key.split("||", 1)
+        buckets[(scope, endpoint)] = {
+            parse_timestamp(bucket_end_str): count
+            for bucket_end_str, count in bucket_map.items()
+        }
+    return buckets
+
+
+def save_checkpoint(state: RuntimeState, checkpoint_path: Path) -> None:
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    serializable_events = []
+    for event in state.recent_events:
+        evt = dict(event)
+        if "event_time" in evt:
+            evt["event_time"] = format_timestamp(evt["event_time"])
+        serializable_events.append(evt)
+    payload = {
+        "recent_events": serializable_events,
+        "traffic_buckets": _serialize_traffic_buckets(state.traffic_buckets),
+        "checkpoint_time": datetime.now(timezone.utc).isoformat(),
+    }
+    tmp_path = checkpoint_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp_path.replace(checkpoint_path)
+
+
+def load_checkpoint(checkpoint_path: Path) -> RuntimeState | None:
+    if not checkpoint_path.exists():
+        return None
+    try:
+        data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        state = RuntimeState()
+        state.recent_events = data.get("recent_events", [])
+        state.traffic_buckets = _deserialize_traffic_buckets(
+            data.get("traffic_buckets", {})
+        )
+        for event in state.recent_events:
+            if "timestamp" in event:
+                event["event_time"] = parse_timestamp(event["timestamp"])
+        return state
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        print(f"Failed to load checkpoint from {checkpoint_path}: {exc}")
+        return None
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -162,50 +255,32 @@ def load_sample_logs(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-async def fetch_nats_batch(settings: StreamSettings) -> list[dict[str, Any]]:
+def fetch_kafka_batch(settings: StreamSettings) -> list[dict[str, Any]]:
     try:
-        import nats
+        from kafka import KafkaConsumer
     except ModuleNotFoundError:
         return []
 
     messages: list[dict[str, Any]] = []
-    event = asyncio.Event()
-
-    async def ignore_error(_exc) -> None:
-        return None
-
     try:
-        connect_timeout = max(0.1, float(settings.poll_timeout_seconds))
-        nc = await asyncio.wait_for(
-            nats.connect(
-                settings.nats_url,
-                allow_reconnect=False,
-                connect_timeout=connect_timeout,
-                reconnect_time_wait=0,
-                max_reconnect_attempts=0,
-                error_cb=ignore_error,
-            ),
-            timeout=connect_timeout,
+        consumer = KafkaConsumer(
+            settings.topic,
+            bootstrap_servers=settings.bootstrap_servers.split(","),
+            auto_offset_reset="latest",
+            enable_auto_commit=True,
+            consumer_timeout_ms=settings.poll_timeout_seconds * 1000,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         )
     except Exception:
         return []
 
-    async def handle_message(msg) -> None:
-        messages.append(json.loads(msg.data.decode("utf-8")))
-        if len(messages) >= settings.batch_size:
-            event.set()
-
-    sub = await nc.subscribe(settings.subject, cb=handle_message)
-
     try:
-        await asyncio.wait_for(event.wait(), timeout=settings.poll_timeout_seconds)
-    except asyncio.TimeoutError:
-        pass
+        for msg in consumer:
+            messages.append(msg.value)
+            if len(messages) >= settings.batch_size:
+                break
     finally:
-        try:
-            await sub.unsubscribe()
-        finally:
-            await nc.drain()
+        consumer.close()
 
     return messages
 
@@ -266,6 +341,82 @@ def _group_by_endpoint(records: list[dict[str, Any]]) -> dict[str, list[dict[str
     return groups
 
 
+def build_bot_feature_windows_spark(
+    records: list[dict[str, Any]],
+    settings: StreamSettings,
+) -> list[dict[str, Any]]:
+    from pyspark.sql.functions import avg, count, hour, lit, max as spark_max, min as spark_min, when
+
+    if not records:
+        return []
+
+    latest = max(record["event_time"] for record in records)
+    active_end = align_window_end(latest, settings.bot_window_slide_seconds)
+    spark = get_spark_session()
+    df = spark.createDataFrame(records)
+    aggregated = (
+        df.groupBy("ip", "session_id", "user_agent")
+        .agg(
+            count("*").alias("number_of_requests"),
+            avg("latency_ms").alias("average_time_ms"),
+            spark_min("event_time").alias("first_seen"),
+            spark_max("event_time").alias("last_seen"),
+            avg(when((df.status >= 200) & (df.status < 300), lit(1.0)).otherwise(lit(0.0))).alias("http_response_2xx"),
+            avg(when((df.status >= 300) & (df.status < 400), lit(1.0)).otherwise(lit(0.0))).alias("http_response_3xx"),
+            avg(when((df.status >= 400) & (df.status < 500), lit(1.0)).otherwise(lit(0.0))).alias("http_response_4xx"),
+            avg(when((df.status >= 500) & (df.status < 600), lit(1.0)).otherwise(lit(0.0))).alias("http_response_5xx"),
+            avg(when(df.method == "GET", lit(1.0)).otherwise(lit(0.0))).alias("get_method"),
+            avg(when(df.method == "POST", lit(1.0)).otherwise(lit(0.0))).alias("post_method"),
+            avg(when(df.method == "HEAD", lit(1.0)).otherwise(lit(0.0))).alias("head_method"),
+            avg(when(~df.method.isin("GET", "POST", "HEAD"), lit(1.0)).otherwise(lit(0.0))).alias("other_method"),
+            spark_max(when((hour("event_time") < 6) | (hour("event_time") >= 22), lit(1)).otherwise(lit(0))).alias("night"),
+        )
+        .collect()
+    )
+
+    scoped_start = active_end - timedelta(seconds=settings.bot_window_seconds)
+    scoped_records = [record for record in records if scoped_start < record["event_time"] <= active_end]
+    grouped_records = _group_by_entity(scoped_records)
+    payloads: list[dict[str, Any]] = []
+    for row in aggregated:
+        row_data = row.asDict(recursive=True)
+        key = (row_data["ip"], row_data["session_id"], row_data["user_agent"])
+        events = grouped_records.get(key, [])
+        if not events:
+            continue
+        route_counts = Counter(event["route_template"] for event in events)
+        second_counts = Counter(event["event_time"].replace(microsecond=0) for event in events)
+        payloads.append(
+            {
+                "feature_version": "v2",
+                "window_start": format_timestamp(scoped_start),
+                "window_end": format_timestamp(active_end),
+                "entity": {
+                    "ip": row_data["ip"],
+                    "session_id": row_data["session_id"],
+                    "user_agent": row_data["user_agent"],
+                },
+                "features": {
+                    "number_of_requests": int(row_data["number_of_requests"]),
+                    "total_duration_s": round((row_data["last_seen"] - row_data["first_seen"]).total_seconds(), 3),
+                    "average_time_ms": round(float(row_data["average_time_ms"]), 3),
+                    "repeated_requests": round(max(route_counts.values()) / max(int(row_data["number_of_requests"]), 1), 4),
+                    "http_response_2xx": round(float(row_data["http_response_2xx"]), 4),
+                    "http_response_3xx": round(float(row_data["http_response_3xx"]), 4),
+                    "http_response_4xx": round(float(row_data["http_response_4xx"]), 4),
+                    "http_response_5xx": round(float(row_data["http_response_5xx"]), 4),
+                    "get_method": round(float(row_data["get_method"]), 4),
+                    "post_method": round(float(row_data["post_method"]), 4),
+                    "head_method": round(float(row_data["head_method"]), 4),
+                    "other_method": round(float(row_data["other_method"]), 4),
+                    "night": int(row_data["night"]),
+                    "max_barrage": max(second_counts.values()),
+                },
+            }
+        )
+    return sorted(payloads, key=lambda item: (item["entity"]["ip"], item["entity"]["session_id"]))
+
+
 def build_bot_feature_windows_python(
     records: list[dict[str, Any]],
     settings: StreamSettings,
@@ -314,109 +465,74 @@ def build_bot_feature_windows_python(
         )
     return sorted(payloads, key=lambda item: (item["entity"]["ip"], item["entity"]["session_id"]))
 
-def build_bot_feature_windows_spark(
+
+def build_bot_feature_windows(records: list[dict[str, Any]], settings: StreamSettings) -> list[dict[str, Any]]:
+    try:
+        return build_bot_feature_windows_spark(records, settings)
+    except Exception:
+        return build_bot_feature_windows_python(records, settings)
+
+
+def build_anomaly_feature_windows_spark(
     records: list[dict[str, Any]],
     settings: StreamSettings,
 ) -> list[dict[str, Any]]:
-    try:
-        from pyspark.sql import SparkSession
-        from pyspark.sql.functions import avg, count, hour, lit, max as spark_max, min as spark_min, when, window
-    except ModuleNotFoundError:
-        return build_bot_feature_windows_python(records, settings)
+    from pyspark.sql.functions import avg, count, lit, percentile_approx, when
 
     if not records:
         return []
 
     latest = max(record["event_time"] for record in records)
-    active_end = align_window_end(latest, settings.bot_window_slide_seconds)
-    spark = SparkSession.builder.master("local[1]").appName("aiops-bot-window").getOrCreate()
-    try:
-        df = spark.createDataFrame(records)
-        aggregated = (
-            df.groupBy(
-                window(
-                    "event_time",
-                    f"{settings.bot_window_seconds} seconds",
-                    f"{settings.bot_window_slide_seconds} seconds",
-                ).alias("window"),
-                "ip",
-                "session_id",
-                "user_agent",
-            )
-            .agg(
-                count("*").alias("number_of_requests"),
-                avg("latency_ms").alias("average_time_ms"),
-                spark_min("event_time").alias("first_seen"),
-                spark_max("event_time").alias("last_seen"),
-                avg(when((df.status >= 200) & (df.status < 300), lit(1.0)).otherwise(lit(0.0))).alias("http_response_2xx"),
-                avg(when((df.status >= 300) & (df.status < 400), lit(1.0)).otherwise(lit(0.0))).alias("http_response_3xx"),
-                avg(when((df.status >= 400) & (df.status < 500), lit(1.0)).otherwise(lit(0.0))).alias("http_response_4xx"),
-                avg(when((df.status >= 500) & (df.status < 600), lit(1.0)).otherwise(lit(0.0))).alias("http_response_5xx"),
-                avg(when(df.method == "GET", lit(1.0)).otherwise(lit(0.0))).alias("get_method"),
-                avg(when(df.method == "POST", lit(1.0)).otherwise(lit(0.0))).alias("post_method"),
-                avg(when(df.method == "HEAD", lit(1.0)).otherwise(lit(0.0))).alias("head_method"),
-                avg(when(~df.method.isin("GET", "POST", "HEAD"), lit(1.0)).otherwise(lit(0.0))).alias("other_method"),
-                spark_max(when((hour("event_time") < 6) | (hour("event_time") >= 22), lit(1)).otherwise(lit(0))).alias("night"),
-            )
-            .collect()
-        )
-    finally:
-        spark.stop()
+    active_end = align_window_end(latest, settings.anomaly_window_slide_seconds)
+    active_start = active_end - timedelta(seconds=settings.anomaly_window_seconds)
+    baseline_start = active_start - timedelta(seconds=settings.anomaly_baseline_lookback_seconds)
 
-    scoped_start = active_end - timedelta(seconds=settings.bot_window_seconds)
-    scoped_records = [record for record in records if scoped_start < record["event_time"] <= active_end]
-    grouped_records = _group_by_entity(scoped_records)
+    spark = get_spark_session()
+    df = spark.createDataFrame(records)
+    aggregated = (
+        df.groupBy("endpoint")
+        .agg(
+            count("*").alias("request_count"),
+            avg("latency_ms").alias("avg_latency_ms"),
+            percentile_approx("latency_ms", 0.95).alias("p95_latency_ms"),
+            percentile_approx("latency_ms", 0.99).alias("p99_latency_ms"),
+            avg(when((df.status >= 500) & (df.status < 600), lit(1.0)).otherwise(lit(0.0))).alias("status_5xx_ratio"),
+        )
+        .collect()
+    )
+
+    by_endpoint = _group_by_endpoint(records)
     payloads: list[dict[str, Any]] = []
     for row in aggregated:
         row_data = row.asDict(recursive=True)
-        row_end = row_data["window"]["end"]
-        if row_end.tzinfo is None:
-            row_end = row_end.replace(tzinfo=timezone.utc)
-        else:
-            row_end = row_end.astimezone(timezone.utc)
-        if row_end != active_end:
-            continue
-        key = (row_data["ip"], row_data["session_id"], row_data["user_agent"])
-        events = grouped_records.get(key, [])
-        if not events:
-            continue
-        route_counts = Counter(event["route_template"] for event in events)
-        second_counts = Counter(event["event_time"].replace(microsecond=0) for event in events)
+        endpoint = row_data["endpoint"]
+        baseline_events = [
+            event
+            for event in by_endpoint.get(endpoint, [])
+            if baseline_start < event["event_time"] <= active_start
+        ]
+        baseline_latencies = [event["latency_ms"] for event in baseline_events] or [float(row_data["avg_latency_ms"])]
+        baseline_5xx_ratio = (
+            sum(1 for event in baseline_events if 500 <= event["status"] < 600) / max(len(baseline_events), 1)
+        )
         payloads.append(
             {
                 "feature_version": "v2",
-                "window_start": format_timestamp(scoped_start),
+                "window_start": format_timestamp(active_start),
                 "window_end": format_timestamp(active_end),
-                "entity": {
-                    "ip": row_data["ip"],
-                    "session_id": row_data["session_id"],
-                    "user_agent": row_data["user_agent"],
-                },
+                "entity": {"endpoint": endpoint},
                 "features": {
-                    "number_of_requests": int(row_data["number_of_requests"]),
-                    "total_duration_s": round((row_data["last_seen"] - row_data["first_seen"]).total_seconds(), 3),
-                    "average_time_ms": round(float(row_data["average_time_ms"]), 3),
-                    "repeated_requests": round(max(route_counts.values()) / max(int(row_data["number_of_requests"]), 1), 4),
-                    "http_response_2xx": round(float(row_data["http_response_2xx"]), 4),
-                    "http_response_3xx": round(float(row_data["http_response_3xx"]), 4),
-                    "http_response_4xx": round(float(row_data["http_response_4xx"]), 4),
-                    "http_response_5xx": round(float(row_data["http_response_5xx"]), 4),
-                    "get_method": round(float(row_data["get_method"]), 4),
-                    "post_method": round(float(row_data["post_method"]), 4),
-                    "head_method": round(float(row_data["head_method"]), 4),
-                    "other_method": round(float(row_data["other_method"]), 4),
-                    "night": int(row_data["night"]),
-                    "max_barrage": max(second_counts.values()),
+                    "request_count": int(row_data["request_count"]),
+                    "avg_latency_ms": round(float(row_data["avg_latency_ms"]), 3),
+                    "p95_latency_ms": round(float(row_data["p95_latency_ms"]), 3),
+                    "p99_latency_ms": round(float(row_data["p99_latency_ms"]), 3),
+                    "status_5xx_ratio": round(float(row_data["status_5xx_ratio"]), 4),
+                    "baseline_avg_latency_ms": round(sum(baseline_latencies) / len(baseline_latencies), 3),
+                    "baseline_5xx_ratio": round(float(baseline_5xx_ratio), 4),
                 },
             }
         )
-    return sorted(payloads, key=lambda item: (item["entity"]["ip"], item["entity"]["session_id"]))
-
-
-def build_bot_feature_windows(records: list[dict[str, Any]], settings: StreamSettings) -> list[dict[str, Any]]:
-    if settings.use_spark_windows:
-        return build_bot_feature_windows_spark(records, settings)
-    return build_bot_feature_windows_python(records, settings)
+    return sorted(payloads, key=lambda item: item["entity"]["endpoint"])
 
 
 def build_anomaly_feature_windows_python(
@@ -463,93 +579,11 @@ def build_anomaly_feature_windows_python(
     return sorted(payloads, key=lambda item: item["entity"]["endpoint"])
 
 
-def build_anomaly_feature_windows_spark(
-    records: list[dict[str, Any]],
-    settings: StreamSettings,
-) -> list[dict[str, Any]]:
-    try:
-        from pyspark.sql import SparkSession
-        from pyspark.sql.functions import avg, count, lit, percentile_approx, when, window
-    except ModuleNotFoundError:
-        return build_anomaly_feature_windows_python(records, settings)
-
-    if not records:
-        return []
-
-    latest = max(record["event_time"] for record in records)
-    active_end = align_window_end(latest, settings.anomaly_window_slide_seconds)
-    active_start = active_end - timedelta(seconds=settings.anomaly_window_seconds)
-    baseline_start = active_start - timedelta(seconds=settings.anomaly_baseline_lookback_seconds)
-
-    spark = SparkSession.builder.master("local[1]").appName("aiops-anomaly-window").getOrCreate()
-    try:
-        df = spark.createDataFrame(records)
-        aggregated = (
-            df.groupBy(
-                window(
-                    "event_time",
-                    f"{settings.anomaly_window_seconds} seconds",
-                    f"{settings.anomaly_window_slide_seconds} seconds",
-                ).alias("window"),
-                "endpoint",
-            )
-            .agg(
-                count("*").alias("request_count"),
-                avg("latency_ms").alias("avg_latency_ms"),
-                percentile_approx("latency_ms", 0.95).alias("p95_latency_ms"),
-                percentile_approx("latency_ms", 0.99).alias("p99_latency_ms"),
-                avg(when((df.status >= 500) & (df.status < 600), lit(1.0)).otherwise(lit(0.0))).alias("status_5xx_ratio"),
-            )
-            .collect()
-        )
-    finally:
-        spark.stop()
-
-    by_endpoint = _group_by_endpoint(records)
-    payloads: list[dict[str, Any]] = []
-    for row in aggregated:
-        row_data = row.asDict(recursive=True)
-        row_end = row_data["window"]["end"]
-        if row_end.tzinfo is None:
-            row_end = row_end.replace(tzinfo=timezone.utc)
-        else:
-            row_end = row_end.astimezone(timezone.utc)
-        if row_end != active_end:
-            continue
-        endpoint = row_data["endpoint"]
-        baseline_events = [
-            event
-            for event in by_endpoint.get(endpoint, [])
-            if baseline_start < event["event_time"] <= active_start
-        ]
-        baseline_latencies = [event["latency_ms"] for event in baseline_events] or [float(row_data["avg_latency_ms"])]
-        baseline_5xx_ratio = (
-            sum(1 for event in baseline_events if 500 <= event["status"] < 600) / max(len(baseline_events), 1)
-        )
-        payloads.append(
-            {
-                "feature_version": "v2",
-                "window_start": format_timestamp(active_start),
-                "window_end": format_timestamp(active_end),
-                "entity": {"endpoint": endpoint},
-                "features": {
-                    "request_count": int(row_data["request_count"]),
-                    "avg_latency_ms": round(float(row_data["avg_latency_ms"]), 3),
-                    "p95_latency_ms": round(float(row_data["p95_latency_ms"]), 3),
-                    "p99_latency_ms": round(float(row_data["p99_latency_ms"]), 3),
-                    "status_5xx_ratio": round(float(row_data["status_5xx_ratio"]), 4),
-                    "baseline_avg_latency_ms": round(sum(baseline_latencies) / len(baseline_latencies), 3),
-                    "baseline_5xx_ratio": round(float(baseline_5xx_ratio), 4),
-                },
-            }
-        )
-    return sorted(payloads, key=lambda item: item["entity"]["endpoint"])
-
-
 def build_anomaly_feature_windows(records: list[dict[str, Any]], settings: StreamSettings) -> list[dict[str, Any]]:
-    if settings.use_spark_windows:
+    try:
         return build_anomaly_feature_windows_spark(records, settings)
-    return build_anomaly_feature_windows_python(records, settings)
+    except Exception:
+        return build_anomaly_feature_windows_python(records, settings)
 
 
 def update_runtime_state(
@@ -866,8 +900,8 @@ def process_once(
     state: RuntimeState | None = None,
 ) -> dict[str, Any]:
     runtime_state = state or RuntimeState()
-    raw_logs = asyncio.run(fetch_nats_batch(settings))
-    source = "nats"
+    raw_logs = fetch_kafka_batch(settings)
+    source = "kafka"
     if not raw_logs:
         raw_logs = shift_logs_to_now(load_sample_logs(settings.raw_log_sample_path))
         source = "sample"
@@ -924,15 +958,37 @@ def process_once(
 
 def main() -> None:
     settings = StreamSettings()
-    runtime_state = RuntimeState()
-    while True:
-        status = process_once(settings, runtime_state)
+    runtime_state = load_checkpoint(settings.checkpoint_path)
+    if runtime_state is not None:
         print(
-            "Processed "
-            f"{status['count']} raw logs from {status['source']} and wrote to {status['sink']} "
-            f"(bot_windows={status['bot_windows']}, forecasts={status['forecasts']}, anomalies={status['anomalies']})"
+            f"Restored stream state from checkpoint: "
+            f"{len(runtime_state.recent_events)} events, "
+            f"{len(runtime_state.traffic_buckets)} traffic buckets"
         )
-        asyncio.run(asyncio.sleep(settings.poll_interval_seconds))
+    else:
+        runtime_state = RuntimeState()
+        print("No checkpoint found, starting with fresh state.")
+
+    last_checkpoint = time.monotonic()
+    try:
+        while True:
+            status = process_once(settings, runtime_state)
+            print(
+                "Processed "
+                f"{status['count']} raw logs from {status['source']} and wrote to {status['sink']} "
+                f"(bot_windows={status['bot_windows']}, forecasts={status['forecasts']}, anomalies={status['anomalies']})"
+            )
+            elapsed = time.monotonic() - last_checkpoint
+            if elapsed >= settings.checkpoint_interval:
+                save_checkpoint(runtime_state, settings.checkpoint_path)
+                last_checkpoint = time.monotonic()
+            time.sleep(settings.poll_interval_seconds)
+    except KeyboardInterrupt:
+        print("Stream processor shutting down.")
+        save_checkpoint(runtime_state, settings.checkpoint_path)
+        print(f"State saved to {settings.checkpoint_path}")
+    finally:
+        shutdown_spark_session()
 
 
 if __name__ == "__main__":

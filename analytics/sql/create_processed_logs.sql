@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS processed_logs (
     anomaly_score Float64,
     is_anomaly UInt8
 ) ENGINE = MergeTree()
-ORDER BY (timestamp, ip, request_id);
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (timestamp, ip, request_id)
+TTL timestamp + INTERVAL 30 DAY;
 
 CREATE TABLE IF NOT EXISTS bot_feature_windows (
     window_start DateTime,
@@ -33,7 +35,9 @@ CREATE TABLE IF NOT EXISTS bot_feature_windows (
     is_bot UInt8,
     model_version String
 ) ENGINE = MergeTree()
-ORDER BY (window_end, ip, session_id);
+PARTITION BY toYYYYMM(window_end)
+ORDER BY (window_end, ip, session_id)
+TTL window_end + INTERVAL 30 DAY;
 
 CREATE TABLE IF NOT EXISTS load_forecasts (
     bucket_end DateTime,
@@ -45,7 +49,9 @@ CREATE TABLE IF NOT EXISTS load_forecasts (
     predicted_request_count Int32,
     model_version String
 ) ENGINE = MergeTree()
-ORDER BY (predicted_bucket_end, scope, endpoint);
+PARTITION BY toYYYYMM(predicted_bucket_end)
+ORDER BY (predicted_bucket_end, scope, endpoint)
+TTL predicted_bucket_end + INTERVAL 30 DAY;
 
 CREATE TABLE IF NOT EXISTS anomaly_alerts (
     window_start DateTime,
@@ -61,4 +67,6 @@ CREATE TABLE IF NOT EXISTS anomaly_alerts (
     is_anomaly UInt8,
     model_version String
 ) ENGINE = MergeTree()
-ORDER BY (window_end, endpoint);
+PARTITION BY toYYYYMM(window_end)
+ORDER BY (window_end, endpoint)
+TTL window_end + INTERVAL 30 DAY;
