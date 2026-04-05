@@ -1,7 +1,7 @@
 # Local-first development
 
 This repository uses Docker only for shared infrastructure:
-- NATS
+- Kafka
 - ClickHouse
 - Grafana
 
@@ -31,15 +31,7 @@ Use the PowerShell task runner:
 .\scripts\dev.ps1 start-all
 ```
 
-The default Windows path is Python-only windowing for `stream-processor`. `install-all` skips `pyspark`, and the local default is `STREAM_USE_SPARK_WINDOWS=0`.
-
-If you want to opt into Spark later:
-
-```powershell
-.\scripts\dev.ps1 install-stream-spark
-$env:STREAM_USE_SPARK_WINDOWS='1'
-.\scripts\dev.ps1 run-stream
-```
+The current `stream-processor` implementation attempts Spark-backed window builders first and falls back to the pure-Python builders if Spark is unavailable or raises an error during local execution.
 
 See [docs/python-first-streaming.md](python-first-streaming.md) for the full Python-first workflow.
 
@@ -70,13 +62,7 @@ make infra-up
 make start-all
 ```
 
-Optional Spark install for the stream processor:
-
-```powershell
-make install-stream-spark
-$env:STREAM_USE_SPARK_WINDOWS='1'
-make run-stream
-```
+The Linux `Makefile` uses the same application defaults as the PowerShell helper: Kafka for transport, ClickHouse for analytics storage, and host-run Python services.
 
 ## Run a single service in the foreground
 
@@ -103,7 +89,7 @@ make run-stream
 ## Local URLs
 
 When services run on the host they use:
-- NATS: `nats://127.0.0.1:4222`
+- Kafka bootstrap server: `localhost:9094`
 - ML API: `http://127.0.0.1:8000`
 - ClickHouse: `http://127.0.0.1:8123`
 - Grafana: `http://127.0.0.1:3000`

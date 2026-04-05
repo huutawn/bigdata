@@ -233,7 +233,7 @@ processing_latency = Histogram('stream_processing_latency_seconds', 'Processing 
 def process_once(...):
     with processing_latency.time():
         # ... processing ...
-        records_processed.inc(len(raw_logs), source="nats")
+        records_processed.inc(len(raw_logs), source="kafka")
 ```
 
 ### Impact
@@ -250,7 +250,7 @@ def process_once(...):
 
 ### Vấn đề
 Chỉ có unit tests. Không có test nào chạy toàn bộ pipeline end-to-end:
-- Generator → NATS → Stream Processor → ML API → ClickHouse
+- Generator → Kafka → Stream Processor → ML API → ClickHouse
 - Không test được interaction giữa các components
 - Không có load/stress tests
 
@@ -262,7 +262,7 @@ Chỉ có unit tests. Không có test nào chạy toàn bộ pipeline end-to-end
 ```python
 def test_end_to_end_pipeline():
     # Start all services via docker-compose
-    # Send 100 test records to NATS
+    # Send 100 test records to Kafka
     # Wait for processing
     # Query ClickHouse to verify data
     # Assert bot predictions exist
@@ -292,7 +292,7 @@ Toàn bộ documentation là text. Không có hình ảnh minh họa kiến trú
 
 ```mermaid
 graph LR
-    A[Generator] -->|logs.raw| B[NATS/Kafka]
+    A[Generator] -->|logs.raw| B[Kafka]
     B --> C[Stream Processor]
     C -->|POST /predict/*| D[ML API]
     C -->|INSERT| E[ClickHouse]
@@ -351,7 +351,7 @@ Không có số liệu nào về:
 Benchmark results (local, M2 MacBook Pro):
 - Throughput: 500 records/sec (batch_size=50, Python windowing)
 - End-to-end latency: p50=2.1s, p95=4.3s, p99=6.8s
-- Memory: NATS=128MB, ClickHouse=512MB, Grafana=256MB, Stream=200MB, ML=150MB
+- Memory: Kafka=1GB, ClickHouse=768MB, Grafana=384MB, Stream=200MB, ML=150MB
 ```
 
 ### Impact

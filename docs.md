@@ -11,7 +11,7 @@
 
 **Architecture v2:**
 ```
-generator -> NATS -> stream-processor -> ml-api -> ClickHouse -> Grafana
+generator -> Kafka -> stream-processor -> ml-api -> ClickHouse -> Grafana
 ```
 
 **Data Flow:**
@@ -52,9 +52,9 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 
 | File | Lines | Purpose |
 |---|---|---|
-| `src/generator/main.py` | 287 | Synthetic log generator with 24-phase traffic cycle (bot, human, incident, mixed) |
-| `src/generator/replay_access_logs.py` | 429 | Real access-log replay: parses Apache/Nginx combined format, synthesizes sessions, rebases timestamps |
-| `requirements.txt` | 1 | `nats-py==2.10.0` |
+| `src/generator/main.py` | 262 | Synthetic log generator with 24-phase traffic cycle (bot, human, incident, mixed) |
+| `src/generator/replay_access_logs.py` | 505 | Real access-log replay: parses Apache/Nginx combined format, synthesizes sessions, rebases timestamps |
+| `requirements.txt` | 1 | `kafka-python-ng==2.2.3` |
 | `Dockerfile` | 15 | Python 3.12-slim |
 
 **Key features:**
@@ -67,11 +67,10 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 
 | File | Lines | Purpose |
 |---|---|---|
-| `src/stream_processor/main.py` | 939 | Core pipeline: NATS consumer, window builder, ML caller, ClickHouse writer, fallback handler |
+| `src/stream_processor/main.py` | 995 | Core pipeline: Kafka consumer, window builder, ML caller, ClickHouse writer, fallback handler |
 | `src/stream_processor/mock_analyzer.py` | 76 | Deterministic mock prediction functions |
 | `src/stream_processor/__init__.py` | 1 | Package init |
-| `requirements.txt` | 1 | `nats-py==2.10.0` |
-| `requirements-spark.txt` | 1 | `pyspark==3.5.5` (optional) |
+| `requirements.txt` | 2 | `kafka-python-ng==2.2.3`, `pyspark==3.5.5` |
 | `Dockerfile` | 21 | Python 3.12-slim + OpenJDK 17 |
 
 **Windowing configurations:**
@@ -92,7 +91,7 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 `history_rps` (10-bucket history), `rolling_mean_5`, `rolling_std_5`, `hour_of_day`, `day_of_week`
 
 **Fallback chain:**
-- NATS unavailable -> load `contracts/examples/raw-logs.sample.jsonl`
+- Kafka unavailable -> load `contracts/examples/raw-logs.sample.jsonl`
 - ML API unavailable -> use local mock analyzers
 - ClickHouse unavailable -> dump rows to `stream-processor/output/processed_rows.mock.jsonl`
 
@@ -133,7 +132,7 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 | `grafana/dashboards/aiops-overview.json` | -- | Dashboard: Requests per Minute, Next Minute Forecast, Top Bot Entities, Endpoint Anomaly Alerts |
 | `grafana/provisioning/datasources/datasource.yml` | -- | ClickHouse datasource auto-provisioning |
 | `grafana/provisioning/dashboards/dashboard.yml` | -- | Dashboard auto-provisioning |
-| `scripts/ensure_seed.py` | 46 | Creates tables and seeds data if empty |
+| `scripts/ensure_seed.py` | 54 | Creates tables and seeds data if empty |
 | `scripts/query_smoke.py` | 33 | Smoke test queries against all 4 tables |
 
 **ClickHouse tables:**
@@ -150,12 +149,12 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 | File | Lines | Coverage |
 |---|---|---|
 | `test_generator.py` | 101 | Log determinism, batch sizing, access log parsing, sessionizer, latency heuristics |
-| `test_stream_processor.py` | 258 | Bot window aggregation, forecast history, fallback paths, ML API integration |
+| `test_stream_processor.py` | 382 | Bot window aggregation, forecast history, fallback paths, ML API integration |
 | `test_ml_api.py` | 291 | Prediction determinism, mode switching, model artifact loading, FastAPI endpoints |
 | `test_contracts.py` | 14 | Contract validation (delegates to `validate_contracts.py`) |
-| `test_analytics_assets.py` | 49 | DDL table existence, seed SQL, Grafana dashboard panels |
+| `test_analytics_assets.py` | 68 | DDL table existence, seed SQL, Grafana dashboard panels |
 
-**Total test lines: 719**
+**Total test lines: 856**
 
 ### 3.6 Contracts (`contracts/`)
 
@@ -177,21 +176,21 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 
 | File | Lines | Purpose |
 |---|---|---|
-| `dev.ps1` | 265 | PowerShell task runner (Windows): infra, install, start/stop, validate, test |
+| `dev.ps1` | 269 | PowerShell task runner (Windows): infra, install, start/stop, validate, test |
 | `validate_contracts.py` | 146 | Custom JSON Schema validator (no external dependencies) |
 
 ### 3.8 Infrastructure (`infra/`)
 
 | File | Lines | Content |
 |---|---|---|
-| `docker-compose.yml` | 69 | 3 services: NATS, ClickHouse, Grafana |
+| `docker-compose.yml` | 82 | 3 services: Kafka, ClickHouse, Grafana |
 | `clickhouse/users.d/default-user.xml` | 13 | ClickHouse user config (no password, all IPs allowed) |
 
 **Infrastructure services:**
 
 | Service | Image | Port | Memory Limit |
 |---|---|---|---|
-| NATS | `nats:2.10.22-alpine` | 4222 (client), 8222 (monitoring) | 128MB |
+| Kafka | `apache/kafka:3.9.0` | 9092, 9093, 9094 | 1GB |
 | ClickHouse | `clickhouse/clickhouse-server:24.12-alpine` | 8123 (HTTP), 9000 (native) | 768MB |
 | Grafana | `grafana/grafana-oss:11.5.2` | 3000 | 384MB |
 
@@ -199,7 +198,7 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 
 | File | Lines | Content |
 |---|---|---|
-| `workflows/ci.yml` | 57 | Contract validation, unit tests, docker-compose validation, ClickHouse smoke test |
+| `workflows/ci.yml` | 68 | Contract validation, unit tests, docker-compose validation, ClickHouse smoke test |
 | `workflows/deploy.yml` | 23 | SSH-based deploy (gated by secrets) |
 | `pull_request_template.md` | 18 | PR checklist (ownership, contracts, fallbacks, tests) |
 
@@ -210,7 +209,7 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 | Category | Technology |
 |---|---|
 | **Language** | Python 3.12 |
-| **Message Broker** | NATS 2.10 (JetStream) |
+| **Message Broker** | Kafka 3.9 (KRaft mode) |
 | **Column Database** | ClickHouse 24.12 |
 | **Visualization** | Grafana 11.5.2 |
 | **Web Framework** | FastAPI 0.115 + Uvicorn 0.34 |
@@ -227,19 +226,19 @@ raw logs -> windowed features -> task-specific predictions -> ClickHouse tables 
 
 | Component | Python Files | Total Lines |
 |---|---|---|
-| `stream-processor/` | 3 | 1,016 |
-| `generator/` | 2 | 717 |
+| `stream-processor/` | 3 | 1,072 |
+| `generator/` | 3 | 768 |
 | `ml-api/` | 3 | 413 |
-| `tests/` | 5 | 719 |
-| `scripts/` | 2 | 411 |
-| `analytics/` | 2 | 79 |
-| **Total application Python** | **17** | **3,084** |
+| `tests/` | 5 | 856 |
+| `scripts/` | 2 | 415 |
+| `analytics/` | 2 | 87 |
+| **Total application Python** | **18** | **3,611** |
 
 Additional files:
 - `Makefile`: 277 lines
-- `scripts/dev.ps1`: 265 lines
-- `docs/`: 1,184 lines (5 files)
-- `CONTRACTS.md`: 241 lines
+- `scripts/dev.ps1`: 269 lines
+- `docs/`: 979 lines (5 files)
+- `CONTRACTS.md`: 243 lines
 
 ---
 
@@ -275,7 +274,7 @@ Additional files:
 ## 7. Real Data Processing vs Simulated
 
 ### Real Processing
-- NATS message pub/sub with batching, flushing, and timeout handling
+- Kafka message pub/sub with batching, flushing, and timeout handling
 - Sliding window aggregation (grouping events by entity/endpoint over time)
 - Feature engineering (percentiles, rolling statistics, ratio computations)
 - HTTP calls to ML API with timeout and error handling
@@ -298,11 +297,11 @@ Additional files:
 
 | File | Lines | Content |
 |---|---|---|
-| `docs/v2-streaming-design.md` | 497 | Architecture explanation: NATS batching vs ML windowing, feature payload construction, end-to-end flow |
+| `docs/v2-streaming-design.md` | 494 | Architecture explanation: Kafka batching vs ML windowing, feature payload construction, end-to-end flow |
 | `docs/linux-testing.md` | 283 | Linux run guide, manual start instructions, Kaggle replay, test checklist |
 | `docs/team-workflow.md` | 51 | Team ownership, branching strategy, dependency matrix, PR checklist |
-| `docs/python-first-streaming.md` | 44 | Windows Python-first workflow (Spark is opt-in) |
-| `docs/local-dev.md` | 109 | Local-first development guide, prerequisites, URLs, helper commands |
+| `docs/python-first-streaming.md` | 43 | Windows local workflow and Spark/Python fallback notes |
+| `docs/local-dev.md` | 108 | Local-first development guide, prerequisites, URLs, helper commands |
 
 ---
 
@@ -322,15 +321,15 @@ Additional files:
 
 ## 10. Strengths
 
-1. **Sound architecture:** The v2 window-based feature engineering correctly separates NATS transport batches from ML analysis windows. Task-specific payloads are well-designed.
+1. **Sound architecture:** The v2 window-based feature engineering correctly separates Kafka transport batches from ML analysis windows. Task-specific payloads are well-designed.
 
-2. **Comprehensive fallback chain:** Every dependency has a graceful degradation path -- NATS (fail fast), ML API (local mocks), ClickHouse (file output), no models (heuristic mocks).
+2. **Comprehensive fallback chain:** Every dependency has a graceful degradation path -- Kafka (fail fast or sample-log fallback depending on component), ML API (local mocks), ClickHouse (file output), no models (heuristic mocks).
 
 3. **Strong contract discipline:** JSON schemas, example payloads, and a custom validator enforce interface consistency across team boundaries.
 
-4. **Well-tested:** 719 lines of unit tests covering all components, including mock/fallback paths, model artifact loading, and FastAPI endpoint testing.
+4. **Well-tested:** 856 lines of unit tests covering all components, including mock/fallback paths, model artifact loading, and FastAPI endpoint testing.
 
-5. **Dual Python/Spark window builders:** Simple env var toggle (`STREAM_USE_SPARK_WINDOWS`) switches between pure-Python and PySpark-backed windowing.
+5. **Dual Python/Spark window builders:** The stream processor attempts the Spark-backed builders first and automatically falls back to the pure-Python builders if Spark is unavailable or errors at runtime.
 
 6. **Real training data:** Forecast model trained on 6,451 rows of real Wikimedia traffic data; anomaly model on 22,033 rows from Microsoft's cloud monitoring dataset.
 
@@ -352,7 +351,7 @@ Additional files:
 
 3. **Hardcoded Grafana credentials:** `admin/admin` is in `docker-compose.yml`.
 
-4. **No integration/e2e tests:** All tests are unit tests with mocking. No test runs the full pipeline end-to-end with real NATS, ML API, and ClickHouse.
+4. **No integration/e2e tests:** All tests are unit tests with mocking. No test runs the full pipeline end-to-end with real Kafka, ML API, and ClickHouse.
 
 5. **Deploy workflow is incomplete:** Only restarts infrastructure containers. Does not deploy application services (generator, stream-processor, ml-api).
 
@@ -368,7 +367,7 @@ Additional files:
 
 11. **Windows-only dev script:** `dev.ps1` is PowerShell-only. No equivalent Bash dev script for Linux (Linux users must use Make or manual commands).
 
-12. **No backpressure mechanism:** The stream processor polls NATS with a fixed interval. If ML API or ClickHouse is slow, there is no backpressure or queue management.
+12. **No backpressure mechanism:** The stream processor polls Kafka with a fixed interval. If ML API or ClickHouse is slow, there is no backpressure or queue management.
 
 ---
 
@@ -395,7 +394,7 @@ make analytics-seed
 ### Local URLs
 | Service | URL |
 |---|---|
-| NATS | `nats://127.0.0.1:4222` |
+| Kafka | `localhost:9094` |
 | ML API | `http://127.0.0.1:8000` |
 | ClickHouse | `http://127.0.0.1:8123` |
 | Grafana | `http://127.0.0.1:3000` (admin/admin) |

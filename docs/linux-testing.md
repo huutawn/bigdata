@@ -23,7 +23,7 @@ make start-all
 
 This starts:
 
-- NATS on `127.0.0.1:4222`
+- Kafka for host apps on `127.0.0.1:9094`
 - ClickHouse on `127.0.0.1:8123`
 - Grafana on `127.0.0.1:3000`
 - ML API on `127.0.0.1:8000`
@@ -54,7 +54,7 @@ pip install -r ml-api/requirements.txt
 Start shared infrastructure:
 
 ```bash
-docker-compose -f infra/docker-compose.yml --env-file .env.example up -d nats clickhouse grafana
+docker-compose -f infra/docker-compose.yml --env-file .env.example up -d kafka clickhouse grafana
 ```
 
 Start the application services in separate terminals.
@@ -72,7 +72,10 @@ Terminal 2, generator:
 ```bash
 cd /path/to/bigdata
 source .venv/bin/activate
-PYTHONPATH=$PWD/generator/src NATS_URL=nats://127.0.0.1:4222 NATS_SUBJECT=logs.raw python -m generator.main
+PYTHONPATH=$PWD/generator/src \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9094 \
+KAFKA_TOPIC=logs.raw \
+python -m generator.main
 ```
 
 If you want to replace the synthetic generator with a real access-log file, stop the default generator and run the replay module instead.
@@ -83,12 +86,12 @@ For a local file already copied into the repo, for example `./access.log`, run:
 cd /path/to/bigdata
 source .venv/bin/activate
 PYTHONPATH=$PWD/generator/src \
-NATS_URL=nats://127.0.0.1:4222 \
-NATS_SUBJECT=logs.raw \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9094 \
+KAFKA_TOPIC=logs.raw \
 python -m generator.replay_access_logs --input-dir "$PWD/access.log" --time-scale 600 --repeat
 ```
 
-Preview the first normalized records without publishing to NATS:
+Preview the first normalized records without publishing to Kafka:
 
 ```bash
 PYTHONPATH=$PWD/generator/src \
@@ -131,8 +134,8 @@ source .venv/bin/activate
 KAGGLE_LOG_DIR=/path/returned/by/kagglehub
 export KAGGLE_CONFIG_DIR=$PWD
 PYTHONPATH=$PWD/generator/src \
-NATS_URL=nats://127.0.0.1:4222 \
-NATS_SUBJECT=logs.raw \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9094 \
+KAFKA_TOPIC=logs.raw \
 python -m generator.replay_access_logs --input-dir "$KAGGLE_LOG_DIR" --time-scale 600 --repeat
 ```
 
@@ -143,7 +146,7 @@ What this replay module does:
 - rebases the old 2019 timestamps to "now" so Grafana shows live data
 - synthesizes `request_id`, `session_id`, `route_template`, and `latency_ms`
 
-If you only want to preview the normalized output without publishing to NATS:
+If you only want to preview the normalized output without publishing to Kafka:
 
 ```bash
 PYTHONPATH=$PWD/generator/src \
@@ -160,11 +163,10 @@ Terminal 3, stream processor:
 cd /path/to/bigdata
 source .venv/bin/activate
 PYTHONPATH=$PWD/stream-processor/src \
-NATS_URL=nats://127.0.0.1:4222 \
-NATS_SUBJECT=logs.raw \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9094 \
+KAFKA_TOPIC=logs.raw \
 ML_API_URL=http://127.0.0.1:8000 \
 CLICKHOUSE_URL=http://127.0.0.1:8123 \
-STREAM_USE_SPARK_WINDOWS=0 \
 python -m stream_processor.main
 ```
 

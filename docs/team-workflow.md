@@ -34,8 +34,8 @@
 
 | Nhóm | Phụ thuộc đầu vào | Phương án dự phòng khi thiếu phụ thuộc |
 | --- | --- | --- |
-| Generator | NATS | Thất bại nhanh và thoát (Fail fast and exit) |
-| Stream | Log thô từ NATS | Tải `contracts/examples/raw-logs.sample.jsonl` |
+| Generator | Kafka | Thất bại nhanh và thoát (Fail fast and exit) |
+| Stream | Log thô từ Kafka | Tải `contracts/examples/raw-logs.sample.jsonl` |
 | Stream | ML API | Sử dụng các hàm dự đoán tất định cục bộ |
 | Stream | ClickHouse | Kết xuất các hàng theo bảng vào `stream-processor/output/processed_rows.mock.jsonl` |
 | Analytics | Các hàng ClickHouse | `ensure_seed.py` tạo và nạp dữ liệu cho tất cả các bảng phân tích |
@@ -48,4 +48,3 @@
 - Hành vi dự phòng (Fallback behavior) vẫn hoạt động.
 - Các bài kiểm tra (Tests) bao phủ được hành vi mới.
 - Các thay đổi nằm trong ranh giới sở hữu trừ khi Tech Lead đã điều phối việc cập nhật.
-

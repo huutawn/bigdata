@@ -161,7 +161,7 @@ Hai cấu trúc trạng thái quan trọng được sử dụng:
 
 Tại sao cần trạng thái:
 
-- chỉ riêng nhóm NATS mới nhất không chứa đủ ngữ cảnh
+- chỉ riêng nhóm Kafka mới nhất không chứa đủ ngữ cảnh
 - các cửa sổ cần lịch sử gần đây, không chỉ vài sự kiện mới nhất
 - dự báo cần các nhóm dữ liệu lịch sử, không chỉ các yêu cầu hiện tại
 
@@ -402,7 +402,7 @@ Tóm lại:
 
 ## 11. Cơ chế cửa sổ Spark trong dự án này (Spark windowing in this project)
 
-Spark được sử dụng làm engine mặc định cho việc xây dựng cửa sổ đặc trưng.
+Các hàm xây dựng cửa sổ bằng Spark được thử trước. Nếu Spark không khả dụng hoặc phát sinh lỗi trong lúc build window, hệ thống sẽ tự động quay về các hàm xây dựng cửa sổ bằng Python thuần.
 
 Spark session được khởi tạo **một lần duy nhất** (singleton pattern) và tái sử dụng giữa các batch. Điều này tránh overhead của việc khởi động JVM mỗi lần xử lý.
 
@@ -462,11 +462,11 @@ Nó cần:
 
 Đó là lý do tại sao `v2` chia các hợp đồng theo nhiệm vụ thay vì ép buộc một hình dạng yêu cầu chung.
 
-## 13. Ví dụ: một nhóm NATS không bằng một cửa sổ
+## 13. Ví dụ: một nhóm Kafka không bằng một cửa sổ
 
 Giả sử `STREAM_BATCH_SIZE=5`.
 
-Luồng thăm dò NATS và nhận được năm tin nhắn mới.
+Luồng thăm dò Kafka và nhận được năm tin nhắn mới.
 Điều đó không có nghĩa là mô hình bot chỉ nhìn thấy đúng năm yêu cầu đó.
 
 Thay vào đó:
@@ -487,7 +487,7 @@ Nếu nhóm chỉ nhớ một điều, thì đó nên là điều này:
 
 - log thô không phải là đặc trưng ML (ML features)
 - bộ xử lý luồng chịu trách nhiệm chuyển đổi sự kiện thành đặc trưng
-- gom nhóm NATS chỉ dành cho vận chuyển tin nhắn
+- gom nhóm Kafka chỉ dành cho vận chuyển tin nhắn
 - cửa sổ (windows) và nhóm (buckets) mới là đơn vị phân tích thực sự
 - ML nên tiêu thụ các gói dữ liệu đã được tổng hợp, không phải các sự kiện thô đơn lẻ
 
