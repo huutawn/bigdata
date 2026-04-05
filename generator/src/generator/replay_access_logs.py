@@ -43,7 +43,7 @@ BOT_SIGNATURES = (
 @dataclass(frozen=True)
 class ReplaySettings:
     input_dir: Path
-    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
     topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
     time_scale: float = float(os.getenv("GENERATOR_REPLAY_TIME_SCALE", "30"))
     session_gap_minutes: int = int(os.getenv("GENERATOR_SESSION_GAP_MINUTES", "15"))

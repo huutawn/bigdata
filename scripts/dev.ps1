@@ -131,7 +131,7 @@ function Get-ReplayCommand {
     }
 
     return @(
-        "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'",
+        "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9094'",
         "`$env:KAFKA_TOPIC='logs.raw'",
         "`$env:PYTHONPATH='$Root/generator/src'",
         "& '$Python' $($quotedArguments -join ' ')"
@@ -196,21 +196,21 @@ switch ($Task) {
     }
     'run-generator' {
         $python = Get-Python
-        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9094'
         $env:KAFKA_TOPIC = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
         & $python -u -m generator.main
     }
     'run-replay' {
         $python = Get-Python
-        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9094'
         $env:KAFKA_TOPIC = 'logs.raw'
         $env:PYTHONPATH = "$Root/generator/src"
         & $python @(Get-ReplayArguments)
     }
     'run-stream' {
         $python = Get-Python
-        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+        $env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9094'
         $env:KAFKA_TOPIC = 'logs.raw'
         $env:ML_API_URL = 'http://127.0.0.1:8000'
         $env:CLICKHOUSE_URL = 'http://127.0.0.1:8123'
@@ -224,7 +224,7 @@ switch ($Task) {
     }
     'start-generator' {
         $python = Get-Python
-        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9094'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
     }
     'start-replay' {
         $python = Get-Python
@@ -232,15 +232,15 @@ switch ($Task) {
     }
     'start-stream' {
         $python = Get-Python
-        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
+        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9094'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'start-all' {
         Invoke-InfraUp
         $python = Get-Python
         Start-BackgroundService 'ml-api' "`$env:ML_API_PORT='8000'; `$env:ML_MODELS_DIR='$Root/ml-api/models'; `$env:PYTHONPATH='$Root/ml-api/src'; & '$python' -u -m uvicorn ml_api.main:app --host 127.0.0.1 --port 8000"
         Start-Sleep -Seconds 2
-        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
-        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9092'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
+        Start-BackgroundService 'generator' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9094'; `$env:KAFKA_TOPIC='logs.raw'; `$env:PYTHONPATH='$Root/generator/src'; & '$python' -u -m generator.main"
+        Start-BackgroundService 'stream-processor' "`$env:KAFKA_BOOTSTRAP_SERVERS='localhost:9094'; `$env:KAFKA_TOPIC='logs.raw'; `$env:ML_API_URL='http://127.0.0.1:8000'; `$env:CLICKHOUSE_URL='http://127.0.0.1:8123'; `$env:STREAM_FALLBACK_OUTPUT_PATH='$Root/stream-processor/output/processed_rows.mock.jsonl'; `$env:PYTHONPATH='$Root/stream-processor/src'; & '$python' -u -m stream_processor.main"
     }
     'stop-local' {
         Stop-BackgroundServices

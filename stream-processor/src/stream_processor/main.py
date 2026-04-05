@@ -45,7 +45,7 @@ def shutdown_spark_session():
 
 @dataclass(frozen=True)
 class StreamSettings:
-    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
     topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
     batch_size: int = int(os.getenv("STREAM_BATCH_SIZE", "50"))
     poll_timeout_seconds: int = int(os.getenv("STREAM_POLL_TIMEOUT_SECONDS", "5"))

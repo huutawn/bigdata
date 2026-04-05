@@ -49,7 +49,7 @@ def make_workspace_dir(prefix: str) -> Path:
 class StreamProcessorTests(unittest.TestCase):
     def test_stream_settings_defaults(self) -> None:
         settings = StreamSettings()
-        self.assertEqual(settings.bootstrap_servers, "localhost:9092")
+        self.assertEqual(settings.bootstrap_servers, "localhost:9094")
         self.assertEqual(settings.topic, "logs.raw")
 
     def test_build_bot_feature_windows_python_aggregates_behavior_features(self) -> None:

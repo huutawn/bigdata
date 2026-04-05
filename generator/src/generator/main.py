@@ -67,7 +67,7 @@ LOAD_PROFILE_JITTER = [0, 1, 0, -1, 0, 1, -1, 0]
 
 @dataclass(frozen=True)
 class GeneratorSettings:
-    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
     topic: str = os.getenv("KAFKA_TOPIC", "logs.raw")
     batch_size: int = int(os.getenv("GENERATOR_BATCH_SIZE", "50"))
     publish_interval_seconds: int = int(
