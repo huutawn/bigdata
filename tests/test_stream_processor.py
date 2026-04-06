@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import shutil
 import sys
 import tempfile
@@ -31,7 +32,18 @@ from stream_processor.main import (  # noqa: E402
 )
 
 
-def _spark_available_on_windows() -> bool:
+def _spark_available() -> bool:
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
     if os.name != "nt":
         return True
     hadoop_home = os.getenv("HADOOP_HOME")
@@ -51,6 +63,29 @@ class StreamProcessorTests(unittest.TestCase):
         settings = StreamSettings()
         self.assertEqual(settings.bootstrap_servers, "localhost:9094")
         self.assertEqual(settings.topic, "logs.raw")
+        self.assertFalse(settings.use_original_event_time)
+
+    def test_normalize_raw_log_can_use_original_timestamp_as_event_time(self) -> None:
+        normalized = normalize_raw_log(
+            {
+                "schema_version": "v2",
+                "timestamp": "2026-04-06T10:00:00Z",
+                "original_timestamp": "2019-01-22T00:26:16Z",
+                "request_id": "req-1",
+                "session_id": "sess-1",
+                "ip": "1.2.3.4",
+                "user_agent": "Googlebot/2.1",
+                "method": "GET",
+                "endpoint": "/api/v1/products",
+                "route_template": "/api/v1/products",
+                "status": 200,
+                "latency_ms": 95,
+            },
+            use_original_event_time=True,
+        )
+
+        self.assertEqual(normalized["original_timestamp"], "2019-01-22T00:26:16Z")
+        self.assertEqual(normalized["event_time"], datetime(2019, 1, 22, 0, 26, 16, tzinfo=timezone.utc))
 
     def test_build_bot_feature_windows_python_aggregates_behavior_features(self) -> None:
         settings = StreamSettings()
@@ -111,8 +146,8 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertGreaterEqual(payloads[0]["features"]["max_barrage"], 1)
 
     @unittest.skipIf(
-        not _spark_available_on_windows(),
-        "Spark on Windows requires HADOOP_HOME/winutils.exe",
+        not _spark_available(),
+        "Spark is unavailable in the current test environment",
     )
     def test_build_bot_feature_windows_spark_aggregates_behavior_features(self) -> None:
         from stream_processor.main import build_bot_feature_windows_spark  # noqa: F811
@@ -326,6 +361,67 @@ class StreamProcessorTests(unittest.TestCase):
         self.assertTrue(all(row["model_version"] == "api-forecast-v2" for row in forecast_rows))
         self.assertEqual(processed_row["predicted_load"], 31)
         self.assertEqual(anomaly_row["model_version"], "api-anomaly-v2")
+
+    def test_process_once_can_align_processing_to_original_event_time(self) -> None:
+        temp_path = make_workspace_dir("stream-processor-original-event-time")
+        self.addCleanup(shutil.rmtree, temp_path, ignore_errors=True)
+        fallback_path = temp_path / "processed_rows.mock.jsonl"
+
+        settings = StreamSettings(
+            batch_size=1,
+            fallback_output_path=fallback_path,
+            use_original_event_time=True,
+        )
+
+        kafka_records = [
+            {
+                "schema_version": "v2",
+                "timestamp": "2026-04-06T10:00:00Z",
+                "original_timestamp": "2019-01-22T00:26:16Z",
+                "request_id": "req-000001",
+                "session_id": "sess-bot-001",
+                "ip": "1.2.3.4",
+                "user_agent": "Googlebot/2.1",
+                "method": "GET",
+                "endpoint": "/api/v1/products",
+                "route_template": "/api/v1/products",
+                "status": 404,
+                "latency_ms": 95,
+            }
+        ]
+
+        with patch("stream_processor.main.fetch_kafka_batch", return_value=kafka_records), patch(
+            "stream_processor.main.write_all_tables",
+            side_effect=error.URLError("clickhouse unavailable"),
+        ), patch("stream_processor.main.ml_api_ready", return_value=False):
+            status = process_once(settings, RuntimeState())
+
+        self.assertEqual(status["source"], "kafka")
+        saved_rows = [json.loads(line) for line in fallback_path.read_text(encoding="utf-8").splitlines()]
+        processed_row = next(item["row"] for item in saved_rows if item["table"] == settings.processed_logs_table)
+        forecast_row = next(item["row"] for item in saved_rows if item["table"] == settings.load_forecast_table)
+
+        self.assertEqual(processed_row["timestamp"], "2019-01-22 00:26:16")
+        self.assertEqual(processed_row["replay_timestamp"], "2026-04-06 10:00:00")
+        self.assertEqual(forecast_row["bucket_end"], "2019-01-22 00:27:00")
+
+    def test_process_once_stays_idle_without_sample_fallback_in_original_event_mode(self) -> None:
+        settings = StreamSettings(use_original_event_time=True)
+
+        with patch("stream_processor.main.fetch_kafka_batch", return_value=[]):
+            status = process_once(settings, RuntimeState())
+
+        self.assertEqual(
+            status,
+            {
+                "source": "idle",
+                "sink": "none",
+                "count": 0,
+                "bot_windows": 0,
+                "forecasts": 0,
+                "anomalies": 0,
+            },
+        )
 
 
 class StreamCheckpointTests(unittest.TestCase):

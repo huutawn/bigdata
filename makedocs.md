@@ -1,0 +1,2 @@
+make run-stream STREAM_USE_ORIGINAL_EVENT_TIME_LOCAL=1
+make run-replay REPLAY_PUBLISH_FAST=1

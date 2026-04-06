@@ -1,7 +1,7 @@
 INSERT INTO processed_logs VALUES
-    ('v2', now(), 'req-000001', 'sess-bot-001', '1.2.3.4', 'Googlebot/2.1', 'GET', '/api/v1/products', '/api/v1/products', 404, 95, 0.91, 1, 74, 0.08, 0),
-    ('v2', now(), 'req-000002', 'sess-user-002', '192.168.1.10', 'Mozilla/5.0', 'POST', '/api/v1/orders', '/api/v1/orders', 500, 3200, 0.12, 0, 74, 0.92, 1),
-    ('v2', now(), 'req-000003', 'sess-user-003', '192.168.1.11', 'Mozilla/5.0 (Mobile)', 'GET', '/api/v1/login', '/api/v1/login', 200, 140, 0.03, 0, 61, 0.04, 0);
+    ('v2', now(), NULL, 'req-000001', 'sess-bot-001', '1.2.3.4', 'Googlebot/2.1', 'GET', '/api/v1/products', '/api/v1/products', 404, 95, 0.91, 1, 74, 0.08, 0),
+    ('v2', now(), NULL, 'req-000002', 'sess-user-002', '192.168.1.10', 'Mozilla/5.0', 'POST', '/api/v1/orders', '/api/v1/orders', 500, 3200, 0.12, 0, 74, 0.92, 1),
+    ('v2', now(), NULL, 'req-000003', 'sess-user-003', '192.168.1.11', 'Mozilla/5.0 (Mobile)', 'GET', '/api/v1/login', '/api/v1/login', 200, 140, 0.03, 0, 61, 0.04, 0);
 
 INSERT INTO bot_feature_windows VALUES
     (now() - 60, now(), '1.2.3.4', 'sess-bot-001', 'Googlebot/2.1', 42, 0.83, 12, 0.18, 0.04, 0.91, 1, 'mock-bot-v2'),

@@ -30,3 +30,4 @@ ml-api/models/*.onnx
 
 .local-dev/
 stream-processor/output/stream-checkpoint.json
+stream-processor/output/stream-checkpoint.json

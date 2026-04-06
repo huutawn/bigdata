@@ -24,6 +24,7 @@ $ReplayProgressEvery = if ($env:GENERATOR_REPLAY_PROGRESS_EVERY) { $env:GENERATO
 $ReplayMaxRecords = if ($env:GENERATOR_REPLAY_MAX_RECORDS) { $env:GENERATOR_REPLAY_MAX_RECORDS } else { '0' }
 $ReplayOutputJsonl = $env:GENERATOR_REPLAY_OUTPUT_JSONL
 $ReplayRepeat = if ($env:GENERATOR_REPEAT) { $env:GENERATOR_REPEAT } else { '0' }
+$ReplayPublishFast = if ($env:GENERATOR_REPLAY_PUBLISH_FAST) { $env:GENERATOR_REPLAY_PUBLISH_FAST } else { '0' }
 
 function Ensure-Venv {
     if (-not (Test-Path $VenvPython)) {
@@ -114,6 +115,9 @@ function Get-ReplayArguments {
     }
     if ($ReplayRepeat -eq '1') {
         $arguments += '--repeat'
+    }
+    if ($ReplayPublishFast -eq '1') {
+        $arguments += '--publish-fast'
     }
 
     return $arguments

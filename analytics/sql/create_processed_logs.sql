@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS processed_logs (
     schema_version String,
     timestamp DateTime,
+    replay_timestamp Nullable(DateTime),
     request_id String,
     session_id String,
     ip String,

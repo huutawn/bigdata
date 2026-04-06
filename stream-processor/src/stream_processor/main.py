@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import socket
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -19,20 +20,53 @@ from stream_processor.mock_analyzer import predict_forecast as predict_forecast_
 
 
 _spark_session = None
+_spark_runtime_supported: bool | None = None
+
+
+def _truthy_env(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _spark_runtime_available() -> bool:
+    global _spark_runtime_supported
+    if _spark_runtime_supported is not None:
+        return _spark_runtime_supported
+
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+    except OSError:
+        _spark_runtime_supported = False
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+    _spark_runtime_supported = True
+    return True
 
 
 def get_spark_session():
-    global _spark_session
+    global _spark_session, _spark_runtime_supported
+    if not _spark_runtime_available():
+        raise RuntimeError("Spark runtime is unavailable in this environment.")
     if _spark_session is None:
-        from pyspark.sql import SparkSession
-        _spark_session = SparkSession.builder \
-            .master("local[2]") \
-            .appName("aiops-stream-processor") \
-            .config("spark.sql.shuffle.partitions", "4") \
-            .config("spark.driver.memory", "1g") \
-            .config("spark.ui.enabled", "false") \
-            .config("spark.log.level", "ERROR") \
-            .getOrCreate()
+        try:
+            from pyspark.sql import SparkSession
+
+            _spark_session = SparkSession.builder \
+                .master("local[2]") \
+                .appName("aiops-stream-processor") \
+                .config("spark.sql.shuffle.partitions", "4") \
+                .config("spark.driver.memory", "1g") \
+                .config("spark.ui.enabled", "false") \
+                .config("spark.log.level", "ERROR") \
+                .getOrCreate()
+        except Exception:
+            _spark_runtime_supported = False
+            raise
     return _spark_session
 
 
@@ -50,6 +84,7 @@ class StreamSettings:
     batch_size: int = int(os.getenv("STREAM_BATCH_SIZE", "50"))
     poll_timeout_seconds: int = int(os.getenv("STREAM_POLL_TIMEOUT_SECONDS", "5"))
     poll_interval_seconds: int = int(os.getenv("STREAM_POLL_INTERVAL_SECONDS", "10"))
+    use_original_event_time: bool = _truthy_env("STREAM_USE_ORIGINAL_EVENT_TIME", "0")
     ml_api_url: str = os.getenv("ML_API_URL", "http://localhost:8000")
     clickhouse_url: str = os.getenv("CLICKHOUSE_URL", "http://localhost:8123")
     processed_logs_table: str = os.getenv("CLICKHOUSE_PROCESSED_LOGS_TABLE", "processed_logs")
@@ -153,7 +188,11 @@ def load_checkpoint(checkpoint_path: Path) -> RuntimeState | None:
             data.get("traffic_buckets", {})
         )
         for event in state.recent_events:
-            if "timestamp" in event:
+            if "event_time" in event:
+                event["event_time"] = parse_timestamp(event["event_time"])
+            elif "original_timestamp" in event:
+                event["event_time"] = parse_timestamp(event["original_timestamp"])
+            elif "timestamp" in event:
                 event["event_time"] = parse_timestamp(event["timestamp"])
         return state
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
@@ -224,9 +263,13 @@ def percentile(values: list[int | float], q: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
 
 
-def normalize_raw_log(record: dict[str, Any]) -> dict[str, Any]:
+def normalize_raw_log(
+    record: dict[str, Any],
+    use_original_event_time: bool = False,
+) -> dict[str, Any]:
     latency_ms = int(record.get("latency_ms", record.get("request_time_ms", 0)))
     timestamp = record.get("timestamp")
+    original_timestamp = record.get("original_timestamp")
     ip = record.get("ip", "0.0.0.0")
     user_agent = record.get("user_agent", "unknown")
     endpoint = record.get("endpoint", "/unknown")
@@ -243,7 +286,15 @@ def normalize_raw_log(record: dict[str, Any]) -> dict[str, Any]:
         "status": int(record.get("status", 200)),
         "latency_ms": latency_ms,
     }
-    normalized["event_time"] = parse_timestamp(normalized["timestamp"])
+    if isinstance(original_timestamp, str) and original_timestamp:
+        normalized["original_timestamp"] = original_timestamp
+
+    event_timestamp = (
+        original_timestamp
+        if use_original_event_time and isinstance(original_timestamp, str) and original_timestamp
+        else normalized["timestamp"]
+    )
+    normalized["event_time"] = parse_timestamp(event_timestamp)
     return normalized
 
 
@@ -829,10 +880,16 @@ def build_processed_logs(
     bot_predictions: dict[tuple[str, str, str], dict[str, Any]],
     forecast_predictions: dict[tuple[str, str], dict[str, Any]],
     anomaly_predictions: dict[str, dict[str, Any]],
+    use_original_event_time: bool = False,
 ) -> list[dict[str, Any]]:
     processed: list[dict[str, Any]] = []
     default_forecast = forecast_predictions.get(("system", ""), {"predicted_request_count": 0})
     for record in raw_logs:
+        logical_timestamp = (
+            record["original_timestamp"]
+            if use_original_event_time and record.get("original_timestamp")
+            else record["timestamp"]
+        )
         bot_prediction = bot_predictions.get(
             (record["ip"], record["session_id"], record["user_agent"]),
             {"bot_score": 0.0, "is_bot": False},
@@ -848,7 +905,7 @@ def build_processed_logs(
         processed.append(
             {
                 "schema_version": record["schema_version"],
-                "timestamp": iso_to_clickhouse_datetime(record["timestamp"]),
+                "timestamp": iso_to_clickhouse_datetime(logical_timestamp),
                 "request_id": record["request_id"],
                 "session_id": record["session_id"],
                 "ip": record["ip"],
@@ -865,6 +922,8 @@ def build_processed_logs(
                 "is_anomaly": int(bool(anomaly_prediction["is_anomaly"])),
             }
         )
+        if use_original_event_time and record.get("original_timestamp"):
+            processed[-1]["replay_timestamp"] = iso_to_clickhouse_datetime(record["timestamp"])
     return processed
 
 
@@ -903,10 +962,22 @@ def process_once(
     raw_logs = fetch_kafka_batch(settings)
     source = "kafka"
     if not raw_logs:
+        if settings.use_original_event_time:
+            return {
+                "source": "idle",
+                "sink": "none",
+                "count": 0,
+                "bot_windows": 0,
+                "forecasts": 0,
+                "anomalies": 0,
+            }
         raw_logs = shift_logs_to_now(load_sample_logs(settings.raw_log_sample_path))
         source = "sample"
 
-    normalized = [normalize_raw_log(record) for record in raw_logs[: settings.batch_size]]
+    normalized = [
+        normalize_raw_log(record, use_original_event_time=settings.use_original_event_time)
+        for record in raw_logs[: settings.batch_size]
+    ]
     update_runtime_state(runtime_state, normalized, settings)
 
     bot_requests = build_bot_feature_windows(runtime_state.recent_events, settings)
@@ -933,6 +1004,7 @@ def process_once(
             bot_predictions,
             forecast_predictions,
             anomaly_predictions,
+            use_original_event_time=settings.use_original_event_time,
         ),
         settings.bot_feature_table: build_bot_feature_rows(bot_requests, bot_predictions),
         settings.load_forecast_table: build_load_forecast_rows(forecast_requests, forecast_predictions),

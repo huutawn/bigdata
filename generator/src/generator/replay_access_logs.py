@@ -40,6 +40,10 @@ BOT_SIGNATURES = (
 )
 
 
+def _truthy_env(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class ReplaySettings:
     input_dir: Path
@@ -49,8 +53,13 @@ class ReplaySettings:
     session_gap_minutes: int = int(os.getenv("GENERATOR_SESSION_GAP_MINUTES", "15"))
     flush_every: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_EVERY", "1000"))
     flush_timeout_seconds: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_TIMEOUT_SECONDS", "30"))
+    flush_retry_attempts: int = int(os.getenv("GENERATOR_REPLAY_FLUSH_RETRY_ATTEMPTS", "3"))
+    flush_retry_backoff_seconds: float = float(
+        os.getenv("GENERATOR_REPLAY_FLUSH_RETRY_BACKOFF_SECONDS", "2")
+    )
     progress_every: int = int(os.getenv("GENERATOR_REPLAY_PROGRESS_EVERY", "1000"))
     max_records: int = int(os.getenv("GENERATOR_REPLAY_MAX_RECORDS", "0"))
+    publish_fast: bool = _truthy_env("GENERATOR_REPLAY_PUBLISH_FAST", "0")
     output_jsonl: Path | None = None
     publish: bool = True
     repeat: bool = False
@@ -211,6 +220,7 @@ def parse_access_log_line(
     return timestamp, {
         "schema_version": "v2",
         "timestamp": "",
+        "original_timestamp": _isoformat(timestamp),
         "request_id": request_id,
         "session_id": session_id,
         "ip": ip,
@@ -267,8 +277,8 @@ def flush_kafka_with_backoff(
     settings: ReplaySettings,
     stage: str,
 ) -> None:
-    attempts = max(3, 1)
-    backoff_seconds = 2.0
+    attempts = max(settings.flush_retry_attempts, 1)
+    backoff_seconds = max(settings.flush_retry_backoff_seconds, 0.0)
 
     for attempt in range(1, attempts + 1):
         try:
@@ -337,11 +347,15 @@ def replay_access_logs(settings: ReplaySettings) -> None:
                     original_timestamp - first_original
                 ).total_seconds() / settings.time_scale
                 scheduled_timestamp = cycle_anchor + timedelta(seconds=max(delta_seconds, 0.0))
-                sleep_seconds = (scheduled_timestamp - datetime.now(timezone.utc)).total_seconds()
-                if sleep_seconds > 0:
-                    time.sleep(sleep_seconds)
+                if settings.publish_fast:
+                    replay_timestamp = datetime.now(timezone.utc)
+                else:
+                    sleep_seconds = (scheduled_timestamp - datetime.now(timezone.utc)).total_seconds()
+                    if sleep_seconds > 0:
+                        time.sleep(sleep_seconds)
+                    replay_timestamp = scheduled_timestamp
 
-                record["timestamp"] = _isoformat(scheduled_timestamp)
+                record["timestamp"] = _isoformat(replay_timestamp)
                 payload = json.dumps(record, ensure_ascii=False)
 
                 if output_handle is not None:
@@ -479,6 +493,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Loop over the dataset forever, useful when replacing the demo generator.",
     )
+    parser.add_argument(
+        "--publish-fast",
+        action="store_true",
+        default=_truthy_env("GENERATOR_REPLAY_PUBLISH_FAST", "0"),
+        help="Publish replay records immediately without sleeping, while preserving original log time in original_timestamp.",
+    )
     return parser
 
 
@@ -492,8 +512,11 @@ def main() -> None:
         time_scale=args.time_scale,
         session_gap_minutes=args.session_gap_minutes,
         flush_every=args.flush_every,
+        flush_retry_attempts=args.flush_retry_attempts,
+        flush_retry_backoff_seconds=args.flush_retry_backoff_seconds,
         progress_every=args.progress_every,
         max_records=args.max_records,
+        publish_fast=args.publish_fast,
         output_jsonl=args.output_jsonl,
         publish=not args.skip_publish,
         repeat=args.repeat,

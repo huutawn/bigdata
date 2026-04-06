@@ -57,6 +57,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(record["method"], "GET")
         self.assertEqual(record["endpoint"], "/image/60844/productModel/200x200")
         self.assertEqual(record["route_template"], "/image/{id}/productModel/{size}")
+        self.assertEqual(record["original_timestamp"], "2019-01-22T00:26:16Z")
         self.assertEqual(record["status"], 200)
         self.assertTrue(str(record["session_id"]).startswith("sess-"))
         self.assertGreaterEqual(int(record["latency_ms"]), 35)
